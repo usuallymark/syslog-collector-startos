@@ -21,6 +21,20 @@ A Debian security update within the same rsyslog version (for example
 `8.2504.0-1+deb13u1`) builds without changes; release it by bumping only the
 revision after the colon in `current.ts` (`8.2504.0:1`).
 
+## Python libraries
+
+`docker/requirements.txt` pins `smbprotocol` and its dependencies by hash.
+Change the version in `docker/requirements.in`, then regenerate with the
+command at the top of `requirements.txt`.
+
+## rbw
+
+`RBW_VERSION` in the Dockerfile. The amd64 build uses the author's `.deb`;
+the arm64 binaries come from the `rbw-arm64-<version>` release of
+openclaw-extrabutter-startos (built there by its `build-rbw-arm64.yml`
+workflow) and are pinned by sha256. A new rbw version needs new arm64
+binaries and new pins.
+
 ## start-sdk
 
 Bump `@start9labs/start-sdk` in `package.json`, run `npm install`, read the

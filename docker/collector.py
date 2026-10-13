@@ -1,0 +1,375 @@
+#!/usr/bin/env python3
+"""Log Collector helper: local retention and the copy to an SMB share.
+
+    collector housekeeping   delete expired local files, once an hour
+    collector push           copy the daily files to the NAS, on a schedule
+
+Both run for as long as the service runs. Settings come from the JSON file
+main.ts writes into the container at every start (COLLECTOR_CONFIG). The
+push state, read by the health check, is /data/state/nas-push.json.
+
+A local file is deleted only once it is past the local retention period
+and, while the NAS copy is on, has been copied to the NAS in its final
+state. Only files named YYYY-MM-DD.log inside a sender folder are ever
+deleted, locally or on the NAS.
+"""
+
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+CONFIG = os.environ.get('COLLECTOR_CONFIG', '/etc/collector.json')
+LOGS_DIR = os.environ.get('LOGS_DIR', '/data/logs')
+STATE_DIR = os.environ.get('STATE_DIR', '/data/state')
+STATE_FILE = os.path.join(STATE_DIR, 'nas-push.json')
+PUSH_NOW = os.path.join(STATE_DIR, 'push-now')
+
+DAY_FILE = re.compile(r'^\d{4}-\d{2}-\d{2}\.log$')
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def now_iso():
+    return datetime.datetime.now().astimezone().isoformat(timespec='seconds')
+
+
+def load_config():
+    with open(CONFIG) as f:
+        return json.load(f)
+
+
+def load_state():
+    try:
+        with open(STATE_FILE) as f:
+            s = json.load(f)
+        if isinstance(s, dict):
+            s.setdefault('files', {})
+            return s
+    except (OSError, ValueError):
+        pass
+    return {'files': {}}
+
+
+def save_state(state):
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = STATE_FILE + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(state, f, indent=2, sort_keys=True)
+    os.replace(tmp, STATE_FILE)
+
+
+def cutoff(days):
+    """Files dated before this YYYY-MM-DD are expired (local time, TZ)."""
+    return (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
+
+
+def local_day_files():
+    """[(relative path 'sender/YYYY-MM-DD.log', absolute path)], sorted."""
+    out = []
+    try:
+        senders = sorted(os.listdir(LOGS_DIR))
+    except OSError:
+        return out
+    for sender in senders:
+        d = os.path.join(LOGS_DIR, sender)
+        if not os.path.isdir(d):
+            continue
+        for name in sorted(os.listdir(d)):
+            p = os.path.join(d, name)
+            if DAY_FILE.match(name) and os.path.isfile(p):
+                out.append((f'{sender}/{name}', p))
+    return out
+
+
+# ── Local retention ─────────────────────────────────────────────────────────
+
+
+def housekeeping_once(cfg):
+    days = int(cfg['localRetentionDays'])
+    nas_on = bool(cfg.get('nas'))
+    limit = cutoff(days)
+    state = load_state() if nas_on else {}
+    # Copies made to an earlier NAS destination do not count.
+    if nas_on and state.get('filesTarget') != target(cfg['nas']):
+        state['files'] = {}
+    files = state.get('files', {})
+    removed = kept = 0
+    for rel, path in local_day_files():
+        day = os.path.basename(rel)[:-4]
+        if day >= limit:
+            continue
+        if nas_on and files.get(rel) != os.path.getsize(path):
+            kept += 1  # not on the NAS yet: keep it until it is
+            continue
+        os.remove(path)
+        removed += 1
+    for sender in os.listdir(LOGS_DIR) if os.path.isdir(LOGS_DIR) else []:
+        d = os.path.join(LOGS_DIR, sender)
+        if os.path.isdir(d) and not os.listdir(d):
+            os.rmdir(d)
+    if removed:
+        log(f'housekeeping: removed {removed} log file(s) dated before {limit}')
+    if kept:
+        log(f'housekeeping: kept {kept} expired file(s) that are not on the NAS yet')
+
+
+def housekeeping(cfg):
+    while True:
+        try:
+            housekeeping_once(cfg)
+        except Exception as e:  # keep running; try again next hour
+            log(f'housekeeping: {e}')
+        time.sleep(3600)
+
+
+# ── Credentials ─────────────────────────────────────────────────────────────
+
+
+class PushError(RuntimeError):
+    pass
+
+
+def rbw(*args, timeout=90):
+    r = subprocess.run(
+        ['rbw', *args], capture_output=True, text=True, timeout=timeout
+    )
+    return r.returncode, r.stdout, r.stderr.strip()
+
+
+def credentials(nas):
+    c = nas['credentials']
+    if c['source'] == 'manual':
+        return c['username'], c['password']
+    item = c['item']
+    if not c.get('baseUrl'):
+        raise PushError(
+            'Vaultwarden is not installed on this server; install it, '
+            'or enter the NAS login in Configure NAS Copy'
+        )
+    code, _, err = rbw('unlock')
+    if code != 0:
+        raise PushError(f'Vaultwarden: could not unlock the vault: {first_line(err)}')
+    code, _, err = rbw('sync')
+    if code != 0:
+        # Keep going with rbw's local copy of the vault.
+        log(f'push: Vaultwarden sync failed, using the local copy: {first_line(err)}')
+    code, out, err = rbw('get', '--raw', item)
+    if code != 0:
+        raise PushError(f'Vaultwarden: item "{item}": {first_line(err)}')
+    try:
+        data = json.loads(out).get('data') or {}
+    except ValueError:
+        raise PushError(f'Vaultwarden: item "{item}" could not be read')
+    user, password = data.get('username'), data.get('password')
+    if not user or not password:
+        raise PushError(
+            f'Vaultwarden: item "{item}" needs a username and a password (a Login item)'
+        )
+    return user, password
+
+
+def prepare_rbw(c):
+    """Start each run with a fresh rbw agent; sign out of Vaultwarden when
+    the account or the server address changed, so rbw signs in again."""
+    rbw('stop-agent', timeout=20)
+    marker = os.path.join(os.environ.get('HOME', '/data/rbw'), 'signed-in-as.json')
+    now = {'email': c.get('email'), 'baseUrl': c.get('baseUrl')}
+    try:
+        with open(marker) as f:
+            before = json.load(f)
+    except (OSError, ValueError):
+        before = None
+    if before != now:
+        if before is not None:
+            log('push: Vaultwarden account or address changed, signing in again')
+        rbw('purge', timeout=20)
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with open(marker, 'w') as f:
+            json.dump(now, f)
+
+
+def first_line(text):
+    lines = [l for l in (text or '').splitlines() if l.strip()]
+    return lines[-1].strip() if lines else 'unknown error'
+
+
+# ── NAS copy ────────────────────────────────────────────────────────────────
+
+
+def unc(host, share, *parts):
+    segs = []
+    for p in parts:
+        segs += [s for s in str(p).replace('\\', '/').split('/') if s and s != '.']
+    if '..' in segs:
+        raise PushError('".." is not allowed in the NAS folder')
+    return '\\\\' + '\\'.join([host, share, *segs])
+
+
+KNOWN_ERRORS = [
+    ('STATUS_LOGON_FAILURE', 'wrong username or password'),
+    ('STATUS_ACCOUNT_DISABLED', 'the NAS account is disabled'),
+    ('STATUS_BAD_NETWORK_NAME', 'share "{share}" does not exist'),
+    ('STATUS_ACCESS_DENIED', 'access denied: the account cannot write to this share or folder'),
+    ('STATUS_DISK_FULL', 'the NAS share is full'),
+]
+
+
+def explain(e, host, share):
+    text = str(e)
+    for code, msg in KNOWN_ERRORS:
+        if code in text:
+            return msg.format(share=share)
+    if isinstance(e, (ConnectionError, TimeoutError)) or 'timed out' in text.lower():
+        return f'could not connect to {host} on port 445 ({text})'
+    return text
+
+
+def target(nas):
+    return f'//{nas["host"]}/{nas["share"]}/{nas["folder"]}'
+
+
+def push_once(cfg, state):
+    import smbclient  # smbprotocol
+    from smbprotocol.exceptions import SMBException
+
+    nas = cfg['nas']
+    host, share, folder = nas['host'], nas['share'], nas['folder']
+    user, password = credentials(nas)
+    try:
+        smbclient.register_session(
+            host, username=user, password=password, connection_timeout=30
+        )
+        # Open the share itself first: makedirs() on a share that does not
+        # exist never returns (smbprotocol 1.17).
+        try:
+            smbclient.listdir(unc(host, share))
+        except OSError as e:
+            if e.errno == 2:
+                raise PushError(f'NAS: share "{share}" was not found on {host}')
+            raise
+        base = unc(host, share, folder)
+        smbclient.makedirs(base, exist_ok=True)
+
+        # A new destination starts from scratch: everything is copied again.
+        target_id = target(nas)
+        if state.get('filesTarget') != target_id:
+            state['filesTarget'] = target_id
+            state['files'] = {}
+
+        copied = 0
+        files = state['files']
+        local = local_day_files()
+        for rel, path in local:
+            size = os.path.getsize(path)
+            if files.get(rel) == size:
+                continue
+            sender, name = rel.split('/')
+            remote_dir = unc(host, share, folder, sender)
+            smbclient.makedirs(remote_dir, exist_ok=True)
+            dest = remote_dir + '\\' + name
+            part = remote_dir + '\\.' + name + '.part'
+            with open(path, 'rb') as src:
+                data = src.read(size)  # exactly what has been written so far
+            with smbclient.open_file(part, mode='wb') as dst:
+                dst.write(data)
+            smbclient.replace(part, dest)
+            files[rel] = len(data)
+            copied += 1
+        # Forget files that no longer exist locally.
+        present = {rel for rel, _ in local}
+        for rel in list(files):
+            if rel not in present:
+                del files[rel]
+
+        # NAS retention: only YYYY-MM-DD.log files in sender folders.
+        limit = cutoff(int(nas['retentionDays']))
+        removed = 0
+        for entry in smbclient.scandir(base):
+            if not entry.is_dir():
+                continue
+            sender_dir = base + '\\' + entry.name
+            here = 0
+            for name in [e.name for e in smbclient.scandir(sender_dir)]:
+                if DAY_FILE.match(name) and name[:-4] < limit:
+                    smbclient.remove(sender_dir + '\\' + name)
+                    here += 1
+            if here and not smbclient.listdir(sender_dir):
+                smbclient.rmdir(sender_dir)
+            removed += here
+        return copied, removed
+    except PushError:
+        raise
+    except (SMBException, OSError, ValueError) as e:
+        raise PushError(f'NAS: {explain(e, host, share)}')
+    finally:
+        try:
+            smbclient.reset_connection_cache()
+        except Exception:
+            pass
+
+
+def push(cfg):
+    nas = cfg.get('nas')
+    if not nas:
+        log('push: the NAS copy is off')
+        while True:
+            time.sleep(86400)
+    interval = int(nas['intervalMinutes']) * 60
+    if nas['credentials']['source'] == 'vaultwarden':
+        prepare_rbw(nas['credentials'])
+    log(
+        f'push: copying to //{nas["host"]}/{nas["share"]}/{nas["folder"]} '
+        f'every {nas["intervalMinutes"]} min'
+    )
+    next_run = 0.0
+    while True:
+        forced = os.path.exists(PUSH_NOW)
+        if forced or time.time() >= next_run:
+            if forced:
+                try:
+                    os.remove(PUSH_NOW)
+                except OSError:
+                    pass
+            state = load_state()
+            state['target'] = target(nas)
+            state['lastAttempt'] = now_iso()
+            try:
+                copied, removed = push_once(cfg, state)
+                state['lastSuccess'] = state['lastAttempt']
+                state['lastError'] = None
+                log(
+                    f'push: done, {copied} file(s) copied'
+                    + (f', {removed} expired file(s) removed from the NAS' if removed else '')
+                )
+            except Exception as e:
+                state['lastError'] = str(e) or e.__class__.__name__
+                log(f'push: failed: {state["lastError"]}')
+            save_state(state)
+            next_run = time.time() + interval
+        time.sleep(10)
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in ('housekeeping', 'push', 'push-once'):
+        print(__doc__, file=sys.stderr)
+        sys.exit(2)
+    cfg = load_config()
+    cmd = sys.argv[1]
+    if cmd == 'housekeeping':
+        housekeeping(cfg)
+    elif cmd == 'push':
+        push(cfg)
+    else:  # one copy, for testing
+        state = load_state()
+        print(push_once(cfg, state))
+        save_state(state)
+
+
+if __name__ == '__main__':
+    main()

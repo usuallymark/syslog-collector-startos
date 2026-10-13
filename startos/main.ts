@@ -1,10 +1,34 @@
-import { readdir, stat, statfs, writeFile } from 'node:fs/promises'
-import { DEFAULT_SETTINGS, settingsJson } from './fileModels/settings.json'
+import {
+  mkdir,
+  readFile,
+  readdir,
+  stat,
+  statfs,
+  writeFile,
+} from 'node:fs/promises'
+import { secretsJson } from './fileModels/secrets.json'
+import {
+  DEFAULT_NAS,
+  DEFAULT_SETTINGS,
+  type NasSettings,
+  settingsJson,
+} from './fileModels/settings.json'
 import { i18n } from './i18n'
 import { syslogHostId } from './interfaces'
 import { rsyslogConf } from './rsyslogConf'
 import { sdk } from './sdk'
-import { LOGS_DIR, RSYSLOG_CONF, SYSLOG_PORT } from './utils'
+import {
+  COLLECTOR_CONF,
+  LOGS_DIR,
+  PUSH_STATE,
+  RBW_ENV,
+  RBW_MASTER,
+  RSYSLOG_CONF,
+  SYSLOG_PORT,
+  VAULTWARDEN_HOST_ID,
+  VAULTWARDEN_ID,
+  VAULTWARDEN_PORT,
+} from './utils'
 
 const DAY_FILE = /^\d{4}-\d{2}-\d{2}\.log$/
 
@@ -68,15 +92,72 @@ function size(bytes: number): string {
   return `${v < 10 && i > 0 ? v.toFixed(1) : Math.round(v)} ${units[i]}`
 }
 
+type PushState = {
+  lastAttempt?: string
+  lastSuccess?: string | null
+  lastError?: string | null
+  target?: string
+}
+
+async function readPushState(): Promise<PushState> {
+  try {
+    return JSON.parse(
+      await readFile(sdk.volumes.main.subpath(PUSH_STATE), 'utf8'),
+    ) as PushState
+  } catch {
+    return {}
+  }
+}
+
+/** collector.py's NAS settings, or null while the copy is off. */
+function collectorNas(
+  nas: NasSettings,
+  nasPassword: string,
+  vaultBaseUrl: string | null,
+) {
+  if (!nas.enabled) return null
+  return {
+    host: nas.host,
+    share: nas.share,
+    folder: nas.folder,
+    intervalMinutes: nas.intervalMinutes,
+    retentionDays: nas.retentionDays,
+    credentials:
+      nas.credentialSource === 'vaultwarden'
+        ? {
+            source: 'vaultwarden',
+            item: nas.vaultItem,
+            email: nas.vaultEmail,
+            baseUrl: vaultBaseUrl,
+          }
+        : { source: 'manual', username: nas.username, password: nasPassword },
+  }
+}
+
 export const main = sdk.setupMain(async ({ effects }) => {
   console.info(i18n('Starting Log Collector'))
 
-  // Reactive: saving Configure Receiver restarts the service with the new
-  // settings.
-  const settings = {
-    ...DEFAULT_SETTINGS,
-    ...((await settingsJson.read().const(effects)) ?? {}),
-  }
+  // Reactive: saving an action restarts the service with the new settings.
+  const stored = await settingsJson.read().const(effects)
+  const settings = { ...DEFAULT_SETTINGS, ...(stored ?? {}) }
+  const nas: NasSettings = { ...DEFAULT_NAS, ...(stored?.nas ?? {}) }
+  const secrets = await secretsJson.read().const(effects)
+  const useVault = nas.enabled && nas.credentialSource === 'vaultwarden'
+
+  // Vaultwarden on this server, over the bridge. null while it is not
+  // installed; the NAS Copy check then says so.
+  const vaultAddress = useVault
+    ? await sdk.host
+        .getBridgeAddress(effects, {
+          packageId: VAULTWARDEN_ID,
+          hostId: VAULTWARDEN_HOST_ID,
+          internalPort: VAULTWARDEN_PORT,
+          ssl: false,
+        })
+        .const()
+    : null
+  const vaultBaseUrl = vaultAddress ? `http://${vaultAddress}` : null
+
   const protocols = [settings.udp && 'UDP', settings.tcp && 'TCP']
     .filter(Boolean)
     .join(' + ')
@@ -92,9 +173,10 @@ export const main = sdk.setupMain(async ({ effects }) => {
     }),
     'rsyslog-sub',
   )
+  const rootfs = await sub.rootfs
 
   await writeFile(
-    `${await sub.rootfs}${RSYSLOG_CONF}`,
+    `${rootfs}${RSYSLOG_CONF}`,
     rsyslogConf({
       port: SYSLOG_PORT,
       udp: settings.udp,
@@ -104,17 +186,51 @@ export const main = sdk.setupMain(async ({ effects }) => {
     }),
   )
 
-  const env = { TZ: settings.timezone }
+  const collectorConfig = {
+    localRetentionDays: settings.retentionDays,
+    nas: collectorNas(nas, secrets?.nasPassword ?? '', vaultBaseUrl),
+  }
+  await writeFile(
+    `${rootfs}${COLLECTOR_CONF}`,
+    JSON.stringify(collectorConfig, null, 2),
+    { mode: 0o600 },
+  )
+
+  // rbw: its configuration and the master password the file pinentry reads.
+  if (useVault) {
+    await mkdir(sdk.volumes.main.subpath('rbw/config/rbw'), {
+      recursive: true,
+      mode: 0o700,
+    })
+    await writeFile(
+      sdk.volumes.main.subpath(RBW_MASTER),
+      secrets?.vaultMasterPassword ?? '',
+      { mode: 0o600 },
+    )
+    if (vaultBaseUrl) {
+      await writeFile(
+        sdk.volumes.main.subpath('rbw/config/rbw/config.json'),
+        JSON.stringify({
+          email: nas.vaultEmail,
+          base_url: vaultBaseUrl,
+          lock_timeout: 3600,
+          pinentry: '/usr/local/bin/pinentry-file',
+        }),
+      )
+    }
+  }
+
+  const tz = { TZ: settings.timezone }
 
   return sdk.Daemons.of(effects)
     .addDaemon('receiver', {
       subcontainer: sub,
-      // Restart rsyslog whenever any setting changes: its configuration file
-      // and the ready check depend on all of them.
-      uses: settings,
+      // Restart rsyslog whenever any receiver setting changes: its
+      // configuration file and the ready check depend on them.
+      uses: { ...settings, nas: undefined },
       exec: {
         command: ['rsyslogd', '-n', '-iNONE', '-f', RSYSLOG_CONF],
-        env,
+        env: tz,
       },
       ready: {
         display: i18n('Receiver'),
@@ -157,10 +273,23 @@ export const main = sdk.setupMain(async ({ effects }) => {
     })
     .addDaemon('housekeeping', {
       subcontainer: sub,
-      uses: { days: settings.retentionDays, tz: settings.timezone },
+      uses: collectorConfig,
       exec: {
-        command: ['housekeeping', String(settings.retentionDays)],
-        env,
+        command: ['collector', 'housekeeping'],
+        env: tz,
+      },
+      ready: {
+        display: null,
+        fn: () => ({ result: 'success', message: '' }),
+      },
+      requires: [],
+    })
+    .addDaemon('pusher', {
+      subcontainer: sub,
+      uses: { collectorConfig, vault: useVault ? nas.vaultEmail : null },
+      exec: {
+        command: ['collector', 'push'],
+        env: { ...tz, ...RBW_ENV },
       },
       ready: {
         display: null,
@@ -192,6 +321,68 @@ export const main = sdk.setupMain(async ({ effects }) => {
         },
       },
       requires: ['receiver'],
+    })
+    .addHealthCheck('nas-copy', {
+      ready: {
+        display: i18n('NAS Copy'),
+        trigger: sdk.trigger.statusTrigger(30_000, { starting: 5_000 }),
+        fn: async () => {
+          if (!nas.enabled) {
+            return {
+              result: 'disabled',
+              message: i18n('Off. Turn it on in Configure NAS Copy.'),
+            }
+          }
+          if (useVault && !vaultBaseUrl) {
+            return {
+              result: 'failure',
+              message: i18n(
+                'Vaultwarden is not installed on this server. Install it, or enter the NAS login in Configure NAS Copy.',
+              ),
+            }
+          }
+          const target = `//${nas.host}/${nas.share}/${nas.folder}`
+          const s = await readPushState()
+          if (!s.lastAttempt || s.target !== target) {
+            return {
+              result: 'loading',
+              message: i18n('Waiting for the first copy to ${target}', {
+                target,
+              }),
+            }
+          }
+          const last = s.lastSuccess
+            ? i18n('last successful copy ${age} ago', {
+                age: age(Date.now() - Date.parse(s.lastSuccess)),
+              })
+            : i18n('no successful copy yet')
+          if (s.lastError) {
+            return {
+              result: 'failure',
+              message: `${s.lastError} (${last})`,
+            }
+          }
+          // More than two intervals without a copy: the copy has stalled.
+          const lateMs = (2 * nas.intervalMinutes + 5) * 60_000
+          if (
+            s.lastSuccess &&
+            Date.now() - Date.parse(s.lastSuccess) > lateMs
+          ) {
+            return {
+              result: 'failure',
+              message: i18n('No copy for a while: ${last}', { last }),
+            }
+          }
+          return {
+            result: 'success',
+            message: i18n('Copied ${age} ago to ${target}', {
+              age: age(Date.now() - Date.parse(s.lastSuccess ?? '')),
+              target,
+            }),
+          }
+        },
+      },
+      requires: [],
     })
     .addHealthCheck('storage', {
       ready: {

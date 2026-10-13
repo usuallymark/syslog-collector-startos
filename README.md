@@ -13,11 +13,12 @@ the technical reference.
 | Item | Value |
 | --- | --- |
 | Package id | `syslog-collector` |
-| Image | `debian:trixie-slim` + Debian's `rsyslog` (version pinned and checked at build, see [UPDATING.md](UPDATING.md)) and `tzdata` |
+| Image | `debian:trixie-slim` + Debian's `rsyslog` (version pinned and checked at build, see [UPDATING.md](UPDATING.md)), `tzdata`, `python3` with hash-pinned `smbprotocol`, and `rbw` |
 | Architectures | x86_64, aarch64 |
 | Volume | `main`, mounted at `/data` |
-| Daemons | `receiver` (`rsyslogd -n`), `housekeeping` (hourly retention cleanup) |
-| Health checks | Receiver (port listening, and the external port StartOS assigned), Last Message, Log Storage |
+| Daemons | `receiver` (`rsyslogd -n`), `housekeeping` (`collector housekeeping`, hourly), `pusher` (`collector push`, NAS copy; idle while off) |
+| Health checks | Receiver (port listening, and the external port StartOS assigned), Last Message, NAS Copy, Log Storage |
+| Dependencies | `vaultwarden` (optional; required only while the NAS login comes from Vaultwarden) |
 
 ## Interface
 
@@ -37,34 +38,56 @@ addresses the user enables. Syslog itself is unencrypted.
 
 | Path | Contents |
 | --- | --- |
-| `/data/settings.json` | Settings written by Configure Receiver |
+| `/data/settings.json` | Settings written by Configure Receiver and Configure NAS Copy |
+| `/data/secrets.json` | NAS password and Vaultwarden master password |
 | `/data/logs/<sender>/<YYYY-MM-DD>.log` | Received messages |
+| `/data/state/nas-push.json` | NAS copy state: last attempt, success and error, copied sizes |
+| `/data/rbw/` | rbw configuration, login, local vault copy, master password file |
 
-`<sender>` is the hostname from the message (lowercased) or the source IP,
+`<sender>` is the short hostname (up to the first dot, unless the hostname is
+an IP address), the hostname as sent, or the source IP; lowercased and
 passed through rsyslog's `secpath-replace` so it can never leave the logs
-folder. Line format:
+folder. Line format, the same for RFC 3164 and RFC 5424 input:
 
 ```
-<received time, RFC 3339> <source IP> <facility>.<severity> <hostname> <tag><message>
+<received time, RFC 3339> <source IP> <facility>.<severity> <hostname> <program>[<pid>]: <message>
 ```
 
 The day in the file name and the received time use the configured time zone
 (`TZ` for rsyslogd and housekeeping). rsyslog's configuration is generated
 from the settings into the container at every start
-(`startos/rsyslogConf.ts`); it is not stored on the volume.
+(`startos/rsyslogConf.ts`); it is not stored on the volume. The same goes
+for `/etc/collector.json`, the settings of `docker/collector.py`.
 
 ## Actions
 
 - **Configure Receiver**: port, UDP on/off, TCP on/off (newline and RFC 6587
-  octet-counted framing), folder naming (hostname or IP), retention days
-  (1–3650, default 3), time zone (IANA name, default UTC). Saving restarts the
-  service.
+  octet-counted framing), folder naming (short, as sent, IP), local
+  retention days (1–3650, default 3), time zone (region, then city; default
+  UTC). Saving restarts the service.
+- **Configure NAS Copy**: off by default and empty. Host, share, folder,
+  interval (5 min to 24 h, default 1 h), NAS retention days (default 30),
+  login entered or read from a Vaultwarden Login item (rbw, Vaultwarden on
+  this server reached over the StartOS bridge). Passwords are never shown
+  again; blank keeps the saved one.
+- **Push Now**: copies at once (the pusher polls for `/data/state/push-now`
+  every 10 s).
+
+## NAS copy
+
+Each run copies every `YYYY-MM-DD.log` whose size differs from the size last
+copied, to `<share>/<folder>/<sender>/<day>.log` (written to a `.part` file,
+then renamed), then deletes `YYYY-MM-DD.log` files in the sender folders on
+the NAS that are older than the NAS retention. A changed destination starts
+again from scratch. Errors are kept in the state file and shown by the NAS
+Copy check, which also fails when no copy succeeded for two intervals.
 
 ## Retention
 
-`housekeeping` deletes `YYYY-MM-DD.log` files dated before today minus the
-retention days, once an hour, then removes empty sender folders. Other files
-are never touched.
+`housekeeping` deletes local `YYYY-MM-DD.log` files dated before today minus
+the retention days, once an hour, then removes empty sender folders. While
+the NAS copy is on, a file is deleted only if its current size was copied
+to the current destination. Other files are never touched.
 
 ## Backups
 
@@ -72,8 +95,8 @@ The whole `main` volume.
 
 ## Not (yet) included
 
-TLS syslog, sender allow-lists, copying the files to a NAS, and collecting
-StartOS's own logs.
+TLS syslog, sender allow-lists, NAS protocols other than SMB, Vaultwarden on
+another server, and collecting StartOS's own logs.
 
 ## Building
 

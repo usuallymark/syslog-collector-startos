@@ -5,9 +5,65 @@ import {
 } from '../fileModels/settings.json'
 import { i18n } from '../i18n'
 import { sdk } from '../sdk'
+import {
+  REGIONS,
+  UTC,
+  ZONES_BY_REGION,
+  canonicalZone,
+  regionOf,
+} from '../timezones'
 import { MIN_EXTERNAL_PORT } from '../utils'
 
-const { InputSpec, Value } = sdk
+const { InputSpec, Value, Variants } = sdk
+
+function regionLabel(region: string): string {
+  switch (region) {
+    case 'Africa':
+      return i18n('Africa')
+    case 'America':
+      return i18n('Americas')
+    case 'Antarctica':
+      return i18n('Antarctica')
+    case 'Arctic':
+      return i18n('Arctic')
+    case 'Asia':
+      return i18n('Asia')
+    case 'Atlantic':
+      return i18n('Atlantic')
+    case 'Australia':
+      return i18n('Australia')
+    case 'Europe':
+      return i18n('Europe')
+    case 'Indian':
+      return i18n('Indian Ocean')
+    case 'Pacific':
+      return i18n('Pacific')
+    default:
+      return region
+  }
+}
+
+// Time zone: pick a region, then a city. UTC needs no city.
+const timezoneVariants: Record<
+  string,
+  { name: string; spec: ReturnType<typeof InputSpec.of> }
+> = {
+  [UTC]: { name: 'UTC', spec: InputSpec.of({}) },
+}
+for (const region of REGIONS) {
+  const cities = ZONES_BY_REGION[region]
+  timezoneVariants[region] = {
+    name: regionLabel(region),
+    spec: InputSpec.of({
+      city: Value.select({
+        name: i18n('City'),
+        description: i18n('A city in your time zone.'),
+        default: Object.keys(cities)[0] ?? null,
+        values: cities,
+      }),
+    }),
+  }
+}
 
 const inputSpec = InputSpec.of({
   port: Value.number({
@@ -39,18 +95,19 @@ const inputSpec = InputSpec.of({
   folderNaming: Value.select({
     name: i18n('Name Folders By'),
     description: i18n(
-      'Each device gets its own folder. The hostname is the name the device puts in its messages; the IP address is where the messages come from.',
+      'Each device gets its own folder. The hostname is the name the device puts in its messages; the IP address is where the messages come from. Changing this starts new folders; existing files stay where they are.',
     ),
     default: DEFAULT_SETTINGS.folderNaming,
     values: {
-      hostname: i18n('Hostname (e.g. firewall)'),
+      short: i18n('Short hostname (e.g. firewall)'),
+      full: i18n('Hostname as sent (e.g. firewall.home.arpa)'),
       ip: i18n('IP address (e.g. 10.0.0.1)'),
     } satisfies Record<FolderNaming, string>,
   }),
   retentionDays: Value.number({
     name: i18n('Keep Logs For'),
     description: i18n(
-      "Daily files older than this are deleted, checked once an hour. With 3 days, today's file and those of the 3 days before it are kept.",
+      "Daily files older than this are deleted from this server, checked once an hour. With 3 days, today's file and those of the 3 days before it are kept. While the NAS copy is on, a file is only deleted once it is on the NAS.",
     ),
     required: true,
     default: DEFAULT_SETTINGS.retentionDays,
@@ -60,27 +117,15 @@ const inputSpec = InputSpec.of({
     step: 1,
     units: i18n('days'),
   }),
-  timezone: Value.text({
+  timezone: Value.union({
     name: i18n('Time Zone'),
     description: i18n(
-      'Decides when a new daily file starts and how times are written in each line. Use an IANA name such as America/Chicago or Europe/Berlin, or UTC.',
+      'Decides when a new daily file starts and how times are written in each line. Pick a region, then a city.',
     ),
-    required: true,
-    default: DEFAULT_SETTINGS.timezone,
-    placeholder: 'UTC',
+    default: UTC,
+    variants: Variants.of(timezoneVariants),
   }),
 })
-
-/** The time zone as Node knows it (canonical spelling), or null. */
-function validTimezone(name: string): string | null {
-  try {
-    return new Intl.DateTimeFormat('en-US', {
-      timeZone: name.trim(),
-    }).resolvedOptions().timeZone
-  } catch {
-    return null
-  }
-}
 
 export const configureReceiver = sdk.Action.withInput(
   'configure-receiver',
@@ -88,7 +133,7 @@ export const configureReceiver = sdk.Action.withInput(
   async () => ({
     name: i18n('Configure Receiver'),
     description: i18n(
-      'Choose the port and protocols devices send to, how device folders are named, how long logs are kept, and the time zone.',
+      'Choose the port and protocols devices send to, how device folders are named, how long logs are kept on this server, and the time zone.',
     ),
     warning: null,
     allowedStatuses: 'any',
@@ -99,21 +144,40 @@ export const configureReceiver = sdk.Action.withInput(
   inputSpec,
 
   async () => {
-    const s = await settingsJson.read().once()
-    return { ...DEFAULT_SETTINGS, ...(s ?? {}) }
+    const s = {
+      ...DEFAULT_SETTINGS,
+      ...((await settingsJson.read().once()) ?? {}),
+    }
+    const region = regionOf(s.timezone)
+    const timezone =
+      region && s.timezone in ZONES_BY_REGION[region]
+        ? { selection: region, value: { city: s.timezone } }
+        : { selection: UTC, value: {} }
+    return {
+      port: s.port,
+      udp: s.udp,
+      tcp: s.tcp,
+      folderNaming: s.folderNaming,
+      retentionDays: s.retentionDays,
+      timezone,
+    } as any
   },
 
   async ({ effects, input }) => {
     if (!input.udp && !input.tcp) {
       throw new Error(i18n('Turn on UDP, TCP or both.'))
     }
-    const timezone = validTimezone(input.timezone)
+    const tz = input.timezone as {
+      selection: string
+      value: { city?: string }
+    }
+    const chosen = tz.selection === UTC ? UTC : (tz.value.city ?? '')
+    const timezone = canonicalZone(chosen)
     if (!timezone) {
       throw new Error(
-        i18n(
-          'Unknown time zone "${name}". Use an IANA name such as America/Chicago, or UTC.',
-          { name: input.timezone },
-        ),
+        i18n('Unknown time zone "${name}". Pick another city.', {
+          name: chosen,
+        }),
       )
     }
 

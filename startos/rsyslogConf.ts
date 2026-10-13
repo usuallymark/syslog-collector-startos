@@ -3,27 +3,38 @@
 //
 // Each message becomes one line in /data/logs/<sender>/<YYYY-MM-DD>.log:
 //
-//   <received time, RFC 3339> <sender IP> <facility>.<severity> <hostname> <tag> <message>
+//   <received time, RFC 3339> <sender IP> <facility>.<severity> <hostname> <program>[<pid>]: <message>
 //
-// The day of the file name and the received time both follow the time zone
-// chosen in Configure Receiver.
+// The line looks the same whether the device sent RFC 3164 (BSD) or RFC 5424
+// (IETF) syslog. The day of the file name and the received time both follow
+// the time zone chosen in Configure Receiver.
+
+import type { FolderNaming } from './fileModels/settings.json'
 
 export type RsyslogOptions = {
   port: number
   udp: boolean
   tcp: boolean
-  folderNaming: 'hostname' | 'ip'
+  folderNaming: FolderNaming
   logsDir: string
 }
 
-export function rsyslogConf(o: RsyslogOptions): string {
-  // secpath-replace turns "/" into "_" and makes ".", ".." and empty names
-  // safe, so a sender cannot write outside its own folder.
-  const folder =
-    o.folderNaming === 'ip'
-      ? '%fromhost-ip:::secpath-replace%'
-      : '%hostname:::lowercase,secpath-replace%'
+// The sender folder, set in $.folder:
+// - full: the hostname the device sent
+// - short: the hostname up to its first dot (vp2430.internal -> vp2430),
+//   except when the "hostname" is an IP address, which is kept whole
+// - ip: the address the message came from
+const FOLDER_RULES: Record<FolderNaming, string> = {
+  full: 'set $.folder = $hostname;',
+  short: `if re_match($hostname, '^[0-9.]+$') or re_match($hostname, ':') then {
+    set $.folder = $hostname;
+  } else {
+    set $.folder = field($hostname, 46, 1);
+  }`,
+  ip: 'set $.folder = $fromhost-ip;',
+}
 
+export function rsyslogConf(o: RsyslogOptions): string {
   const inputs: string[] = []
   if (o.udp) {
     inputs.push(
@@ -50,14 +61,33 @@ global(
 
 ${inputs.join('\n')}
 
+# secpath-replace turns "/" into "_" and makes ".", ".." and empty names safe,
+# so a sender can never write outside its own folder.
 template(name="dayFile" type="string"
-  string="${o.logsDir}/${folder}/%$year%-%$month%-%$day%.log")
+  string="${o.logsDir}/%$.folder:::lowercase,secpath-replace%/%$year%-%$month%-%$day%.log")
 
 template(name="line" type="string"
-  string="%timegenerated:::date-rfc3339% %fromhost-ip% %syslogfacility-text%.%syslogseverity-text% %hostname% %syslogtag%%msg:::sp-if-no-1st-sp%%msg:::drop-last-lf%\\n")
+  string="%timegenerated:::date-rfc3339% %fromhost-ip% %syslogfacility-text%.%syslogseverity-text% %hostname% %$.tag%%msg:::sp-if-no-1st-sp%%msg:::drop-last-lf%\\n")
 
 # Messages from the network: one file per sender per day.
 ruleset(name="remote") {
+  ${FOLDER_RULES[o.folderNaming]}
+
+  # "program[pid]:" for every message. RFC 5424 carries the program and the
+  # process id as separate fields with no colon; RFC 3164 usually has the
+  # colon already.
+  if $protocol-version == "1" then {
+    if $procid != "-" and $procid != "" then {
+      set $.tag = $app-name & "[" & $procid & "]:";
+    } else {
+      set $.tag = $app-name & ":";
+    }
+  } else if $syslogtag == "" or re_match($syslogtag, ':$') then {
+    set $.tag = $syslogtag;
+  } else {
+    set $.tag = $syslogtag & ":";
+  }
+
   action(
     type="omfile"
     dynaFile="dayFile"

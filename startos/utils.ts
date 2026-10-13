@@ -19,3 +19,30 @@ export const MIN_EXTERNAL_PORT = 1025
 export const DATA_DIR = '/data'
 export const LOGS_DIR = '/data/logs'
 export const RSYSLOG_CONF = '/etc/rsyslog-collector.conf'
+
+// NAS copy: state written by collector.py, and the file Push Now creates.
+export const STATE_DIR = '/data/state'
+export const PUSH_STATE = 'state/nas-push.json'
+export const PUSH_NOW = 'state/push-now'
+
+// Settings for collector.py, written into the container at every start.
+export const COLLECTOR_CONF = '/etc/collector.json'
+
+// rbw (Vaultwarden client) keeps its login and vault copy on the volume, so a
+// restart is not a new device to Vaultwarden.
+export const RBW_DIR = '/data/rbw'
+export const RBW_MASTER = 'rbw/master-password'
+export const RBW_ENV = {
+  HOME: RBW_DIR,
+  XDG_CONFIG_HOME: `${RBW_DIR}/config`,
+  XDG_CACHE_HOME: `${RBW_DIR}/cache`,
+  XDG_RUNTIME_DIR: `${RBW_DIR}/runtime`,
+}
+
+// Vaultwarden on this server, reached over the StartOS bridge (constants from
+// vaultwarden-startos: host id "main", internal HTTP port 80).
+export const VAULTWARDEN_ID = 'vaultwarden'
+export const VAULTWARDEN_HOST_ID = 'main'
+export const VAULTWARDEN_PORT = 80
+
+export const INTERVAL_CHOICES = [5, 15, 30, 60, 180, 360, 720, 1440] as const
