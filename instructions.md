@@ -64,7 +64,12 @@ Open **Log Center > Log Sending**:
 - **Share** and **Folder**: where the files go, for example share `logs`, folder `syslog`. The folder is created if missing. Use a folder for these logs only: expired `YYYY-MM-DD.log` files in its device folders are deleted.
 - **Copy Interval**: from every 5 minutes to once a day (every hour by default). Today's file is copied again each time it has grown.
 - **Keep Logs on the NAS For**: 30 days by default.
-- **NAS Login**: an account that can write to the share, either entered here or read from **Vaultwarden on this server**. For Vaultwarden, create a Login item holding the NAS username and password, and enter its name, your Vaultwarden account email and master password. The item is read before every copy, so a changed NAS password is picked up by itself.
+- **NAS Login**: an account that can write to the share. Three ways to give it:
+  - **Enter here**: the NAS username and password.
+  - **From Vaultwarden on this server**: Vaultwarden installed on the same StartOS server.
+  - **From Vaultwarden at an address**: Vaultwarden running elsewhere. Enter its URL. If the URL uses a name ending in `.local`, also enter the IP address it stands for (StartOS services cannot look up `.local` names). If its HTTPS certificate is signed by your own certificate authority, for example the root CA of the StartOS server it runs on, paste that CA certificate.
+
+  For both Vaultwarden options, create a Login item holding the NAS username and password, and enter the item's name, your Vaultwarden account email and your master password. The item is read before every copy, so a changed NAS password is picked up by itself.
 
 The folder on the NAS mirrors the one here: `syslog/firewall/2026-10-13.log`. **Actions > Push Now** copies at once, and the **NAS Copy** health check shows when the last copy worked, or why it failed.
 
@@ -77,8 +82,12 @@ While the copy is on, a file is only deleted from this server after it has been 
 - **No sender filtering yet.** Any device that can reach the address and port can write logs.
 - Logs of StartOS itself are not collected.
 - Files older than the retention period are deleted, checked once an hour. Use the NAS copy, or back up, to keep them longer.
-- The NAS copy speaks SMB only, and reads its login from Vaultwarden only when Vaultwarden runs on this server.
+- The NAS copy speaks SMB only.
 
 ## Backups
 
 A StartOS backup includes the settings, the saved passwords, and all log files that exist at backup time.
+
+## Where passwords are kept
+
+The NAS password ("Enter here") and the Vaultwarden master password are stored in one file on this server that only root can read. They are never shown again in a form, never written to the service logs, and never sent anywhere but to the NAS and to Vaultwarden. When the login comes from Vaultwarden, the NAS password itself is not stored at all: it is read from the vault before each copy.

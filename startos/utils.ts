@@ -28,10 +28,12 @@ export const PUSH_NOW = 'state/push-now'
 // Settings for collector.py, written into the container at every start.
 export const COLLECTOR_CONF = '/etc/collector.json'
 
+// System CAs plus a custom CA for a remote Vaultwarden (SSL_CERT_FILE).
+export const CA_BUNDLE = '/etc/ssl/certs/log-collector-bundle.pem'
+
 // rbw (Vaultwarden client) keeps its login and vault copy on the volume, so a
 // restart is not a new device to Vaultwarden.
 export const RBW_DIR = '/data/rbw'
-export const RBW_MASTER = 'rbw/master-password'
 export const RBW_ENV = {
   HOME: RBW_DIR,
   XDG_CONFIG_HOME: `${RBW_DIR}/config`,

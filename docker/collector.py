@@ -23,6 +23,7 @@ import sys
 import time
 
 CONFIG = os.environ.get('COLLECTOR_CONFIG', '/etc/collector.json')
+SECRETS = os.environ.get('COLLECTOR_SECRETS', '/data/secrets.json')
 LOGS_DIR = os.environ.get('LOGS_DIR', '/data/logs')
 STATE_DIR = os.environ.get('STATE_DIR', '/data/state')
 STATE_FILE = os.path.join(STATE_DIR, 'nas-push.json')
@@ -142,15 +143,27 @@ def rbw(*args, timeout=90):
     return r.returncode, r.stdout, r.stderr.strip()
 
 
+def secret(name):
+    """A password saved by Configure NAS Copy (root-only secrets.json)."""
+    try:
+        with open(SECRETS) as f:
+            return json.load(f).get(name) or ''
+    except (OSError, ValueError):
+        return ''
+
+
 def credentials(nas):
     c = nas['credentials']
     if c['source'] == 'manual':
-        return c['username'], c['password']
+        password = secret('nasPassword')
+        if not password:
+            raise PushError('no NAS password saved; enter it in Configure NAS Copy')
+        return c['username'], password
     item = c['item']
     if not c.get('baseUrl'):
         raise PushError(
             'Vaultwarden is not installed on this server; install it, '
-            'or enter the NAS login in Configure NAS Copy'
+            'or choose another login option in Configure NAS Copy'
         )
     code, _, err = rbw('unlock')
     if code != 0:
@@ -225,7 +238,7 @@ def explain(e, host, share):
     for code, msg in KNOWN_ERRORS:
         if code in text:
             return msg.format(share=share)
-    if isinstance(e, (ConnectionError, TimeoutError)) or 'timed out' in text.lower():
+    if isinstance(e, (ConnectionError, TimeoutError)) or 'timed out' in text.lower() or 'Failed to connect' in text:
         return f'could not connect to {host} on port 445 ({text})'
     return text
 
@@ -321,7 +334,7 @@ def push(cfg):
         while True:
             time.sleep(86400)
     interval = int(nas['intervalMinutes']) * 60
-    if nas['credentials']['source'] == 'vaultwarden':
+    if nas['credentials']['source'] != 'manual':
         prepare_rbw(nas['credentials'])
     log(
         f'push: copying to //{nas["host"]}/{nas["share"]}/{nas["folder"]} '

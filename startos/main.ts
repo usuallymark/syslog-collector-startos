@@ -6,7 +6,7 @@ import {
   statfs,
   writeFile,
 } from 'node:fs/promises'
-import { secretsJson } from './fileModels/secrets.json'
+import { restrictSecrets } from './fileModels/secrets.json'
 import {
   DEFAULT_NAS,
   DEFAULT_SETTINGS,
@@ -18,11 +18,11 @@ import { syslogHostId } from './interfaces'
 import { rsyslogConf } from './rsyslogConf'
 import { sdk } from './sdk'
 import {
+  CA_BUNDLE,
   COLLECTOR_CONF,
   LOGS_DIR,
   PUSH_STATE,
   RBW_ENV,
-  RBW_MASTER,
   RSYSLOG_CONF,
   SYSLOG_PORT,
   VAULTWARDEN_HOST_ID,
@@ -109,12 +109,9 @@ async function readPushState(): Promise<PushState> {
   }
 }
 
-/** collector.py's NAS settings, or null while the copy is off. */
-function collectorNas(
-  nas: NasSettings,
-  nasPassword: string,
-  vaultBaseUrl: string | null,
-) {
+/** collector.py's NAS settings, or null while the copy is off. Passwords
+ * are not included: collector.py reads them from secrets.json. */
+function collectorNas(nas: NasSettings, vaultBaseUrl: string | null) {
   if (!nas.enabled) return null
   return {
     host: nas.host,
@@ -123,15 +120,25 @@ function collectorNas(
     intervalMinutes: nas.intervalMinutes,
     retentionDays: nas.retentionDays,
     credentials:
-      nas.credentialSource === 'vaultwarden'
-        ? {
-            source: 'vaultwarden',
+      nas.credentialSource === 'manual'
+        ? { source: 'manual', username: nas.username }
+        : {
+            source: nas.credentialSource,
             item: nas.vaultItem,
             email: nas.vaultEmail,
             baseUrl: vaultBaseUrl,
-          }
-        : { source: 'manual', username: nas.username, password: nasPassword },
+          },
   }
+}
+
+const HOSTS_BEGIN = '# BEGIN Log Collector host mapping'
+const HOSTS_END = '# END Log Collector host mapping'
+
+/** /etc/hosts with our block (re)placed at the end. */
+function withHostsBlock(existing: string, host: string, ip: string): string {
+  const re = new RegExp(`\\n?${HOSTS_BEGIN}[\\s\\S]*?${HOSTS_END}\\n?`, 'g')
+  const base = existing.replace(re, '\n').trimEnd()
+  return [base, HOSTS_BEGIN, `${ip}\t${host}`, HOSTS_END].join('\n') + '\n'
 }
 
 export const main = sdk.setupMain(async ({ effects }) => {
@@ -141,22 +148,33 @@ export const main = sdk.setupMain(async ({ effects }) => {
   const stored = await settingsJson.read().const(effects)
   const settings = { ...DEFAULT_SETTINGS, ...(stored ?? {}) }
   const nas: NasSettings = { ...DEFAULT_NAS, ...(stored?.nas ?? {}) }
-  const secrets = await secretsJson.read().const(effects)
-  const useVault = nas.enabled && nas.credentialSource === 'vaultwarden'
+  const vaultSource = nas.enabled ? nas.credentialSource : 'manual'
 
-  // Vaultwarden on this server, over the bridge. null while it is not
-  // installed; the NAS Copy check then says so.
-  const vaultAddress = useVault
-    ? await sdk.host
-        .getBridgeAddress(effects, {
-          packageId: VAULTWARDEN_ID,
-          hostId: VAULTWARDEN_HOST_ID,
-          internalPort: VAULTWARDEN_PORT,
-          ssl: false,
-        })
-        .const()
-    : null
-  const vaultBaseUrl = vaultAddress ? `http://${vaultAddress}` : null
+  // Vaultwarden on this server is reached over the bridge (null while it is
+  // not installed; the NAS Copy check then says so). Vaultwarden elsewhere is
+  // reached at the URL the user entered.
+  const localVault =
+    vaultSource === 'vaultwarden'
+      ? await sdk.host
+          .getBridgeAddress(effects, {
+            packageId: VAULTWARDEN_ID,
+            hostId: VAULTWARDEN_HOST_ID,
+            internalPort: VAULTWARDEN_PORT,
+            ssl: false,
+          })
+          .const()
+      : null
+  const vaultBaseUrl =
+    vaultSource === 'vaultwarden'
+      ? localVault
+        ? `http://${localVault}`
+        : null
+      : vaultSource === 'vaultwarden-url'
+        ? nas.vaultUrl || null
+        : null
+
+  // secrets.json is root-only (installs from 8.2504.0:1 wrote it readable).
+  await restrictSecrets()
 
   const protocols = [settings.udp && 'UDP', settings.tcp && 'TCP']
     .filter(Boolean)
@@ -188,7 +206,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
 
   const collectorConfig = {
     localRetentionDays: settings.retentionDays,
-    nas: collectorNas(nas, secrets?.nasPassword ?? '', vaultBaseUrl),
+    nas: collectorNas(nas, vaultBaseUrl),
   }
   await writeFile(
     `${rootfs}${COLLECTOR_CONF}`,
@@ -196,27 +214,43 @@ export const main = sdk.setupMain(async ({ effects }) => {
     { mode: 0o600 },
   )
 
-  // rbw: its configuration and the master password the file pinentry reads.
-  if (useVault) {
+  // rbw: its configuration. The master password stays in secrets.json, where
+  // the pinentry reads it.
+  const pusherEnv: Record<string, string> = { ...RBW_ENV }
+  if (vaultSource !== 'manual' && vaultBaseUrl) {
     await mkdir(sdk.volumes.main.subpath('rbw/config/rbw'), {
       recursive: true,
       mode: 0o700,
     })
     await writeFile(
-      sdk.volumes.main.subpath(RBW_MASTER),
-      secrets?.vaultMasterPassword ?? '',
-      { mode: 0o600 },
+      sdk.volumes.main.subpath('rbw/config/rbw/config.json'),
+      JSON.stringify({
+        email: nas.vaultEmail,
+        base_url: vaultBaseUrl,
+        lock_timeout: 3600,
+        pinentry: '/usr/local/bin/pinentry-file',
+      }),
     )
-    if (vaultBaseUrl) {
+  }
+  if (vaultSource === 'vaultwarden-url' && vaultBaseUrl) {
+    // A .local name StartOS cannot look up: map it to the IP entered.
+    const host = new URL(vaultBaseUrl).hostname
+    if (nas.vaultIp) {
+      const hostsPath = `${rootfs}/etc/hosts`
+      const existing = await readFile(hostsPath, 'utf8').catch(() => '')
+      await writeFile(hostsPath, withHostsBlock(existing, host, nas.vaultIp))
+    }
+    // An own certificate authority: trust it on top of the system ones.
+    if (nas.vaultCa) {
+      const system = await readFile(
+        `${rootfs}/etc/ssl/certs/ca-certificates.crt`,
+        'utf8',
+      ).catch(() => '')
       await writeFile(
-        sdk.volumes.main.subpath('rbw/config/rbw/config.json'),
-        JSON.stringify({
-          email: nas.vaultEmail,
-          base_url: vaultBaseUrl,
-          lock_timeout: 3600,
-          pinentry: '/usr/local/bin/pinentry-file',
-        }),
+        `${rootfs}${CA_BUNDLE}`,
+        `${system.trimEnd()}\n${nas.vaultCa.trim()}\n`,
       )
+      pusherEnv.SSL_CERT_FILE = CA_BUNDLE
     }
   }
 
@@ -286,10 +320,15 @@ export const main = sdk.setupMain(async ({ effects }) => {
     })
     .addDaemon('pusher', {
       subcontainer: sub,
-      uses: { collectorConfig, vault: useVault ? nas.vaultEmail : null },
+      uses: {
+        collectorConfig,
+        pusherEnv,
+        vaultIp: nas.vaultIp,
+        ca: nas.vaultCa,
+      },
       exec: {
         command: ['collector', 'push'],
-        env: { ...tz, ...RBW_ENV },
+        env: { ...tz, ...pusherEnv },
       },
       ready: {
         display: null,
@@ -333,7 +372,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
               message: i18n('Off. Turn it on in Configure NAS Copy.'),
             }
           }
-          if (useVault && !vaultBaseUrl) {
+          if (vaultSource === 'vaultwarden' && !vaultBaseUrl) {
             return {
               result: 'failure',
               message: i18n(

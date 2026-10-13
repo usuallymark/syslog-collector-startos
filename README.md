@@ -39,10 +39,10 @@ addresses the user enables. Syslog itself is unencrypted.
 | Path | Contents |
 | --- | --- |
 | `/data/settings.json` | Settings written by Configure Receiver and Configure NAS Copy |
-| `/data/secrets.json` | NAS password and Vaultwarden master password |
+| `/data/secrets.json` | NAS password and Vaultwarden master password (mode 600; the only copy) |
 | `/data/logs/<sender>/<YYYY-MM-DD>.log` | Received messages |
 | `/data/state/nas-push.json` | NAS copy state: last attempt, success and error, copied sizes |
-| `/data/rbw/` | rbw configuration, login, local vault copy, master password file |
+| `/data/rbw/` | rbw configuration, login and local (encrypted) vault copy |
 
 `<sender>` is the short hostname (up to the first dot, unless the hostname is
 an IP address), the hostname as sent, or the source IP; lowercased and
@@ -67,9 +67,12 @@ for `/etc/collector.json`, the settings of `docker/collector.py`.
   UTC). Saving restarts the service.
 - **Configure NAS Copy**: off by default and empty. Host, share, folder,
   interval (5 min to 24 h, default 1 h), NAS retention days (default 30),
-  login entered or read from a Vaultwarden Login item (rbw, Vaultwarden on
-  this server reached over the StartOS bridge). Passwords are never shown
-  again; blank keeps the saved one.
+  login entered, or read from a Vaultwarden Login item with rbw: Vaultwarden
+  on this server (reached over the StartOS bridge) or at a URL (optional IP
+  for a `.local` name, written to the container's `/etc/hosts`; optional
+  custom CA, appended to the system bundle and passed as `SSL_CERT_FILE`).
+  Passwords are never shown again; blank keeps the saved one. rbw's pinentry
+  and collector.py read them from `secrets.json`.
 - **Push Now**: copies at once (the pusher polls for `/data/state/push-now`
   every 10 s).
 
@@ -95,8 +98,8 @@ The whole `main` volume.
 
 ## Not (yet) included
 
-TLS syslog, sender allow-lists, NAS protocols other than SMB, Vaultwarden on
-another server, and collecting StartOS's own logs.
+TLS syslog, sender allow-lists, NAS protocols other than SMB, and collecting
+StartOS's own logs.
 
 ## Building
 

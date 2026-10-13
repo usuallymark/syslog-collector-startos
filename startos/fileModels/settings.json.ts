@@ -8,7 +8,11 @@ import { sdk } from '../sdk'
 export const FOLDER_NAMINGS = ['short', 'full', 'ip'] as const
 export type FolderNaming = (typeof FOLDER_NAMINGS)[number]
 
-export const CREDENTIAL_SOURCES = ['manual', 'vaultwarden'] as const
+export const CREDENTIAL_SOURCES = [
+  'manual',
+  'vaultwarden',
+  'vaultwarden-url',
+] as const
 export type CredentialSource = (typeof CREDENTIAL_SOURCES)[number]
 
 export const DEFAULT_SETTINGS = {
@@ -32,6 +36,9 @@ export const DEFAULT_NAS = {
   username: '',
   vaultItem: '',
   vaultEmail: '',
+  vaultUrl: '',
+  vaultIp: '',
+  vaultCa: '',
 }
 
 const nasShape = z.looseObject({
@@ -57,6 +64,9 @@ const nasShape = z.looseObject({
   username: z.string().catch(DEFAULT_NAS.username),
   vaultItem: z.string().catch(DEFAULT_NAS.vaultItem),
   vaultEmail: z.string().catch(DEFAULT_NAS.vaultEmail),
+  vaultUrl: z.string().catch(DEFAULT_NAS.vaultUrl),
+  vaultIp: z.string().catch(DEFAULT_NAS.vaultIp),
+  vaultCa: z.string().catch(DEFAULT_NAS.vaultCa),
 })
 
 const shape = z.looseObject({

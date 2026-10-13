@@ -1,7 +1,8 @@
-import { secretsJson } from '../fileModels/secrets.json'
+import { secretsJson, writeSecrets } from '../fileModels/secrets.json'
 import {
   type CredentialSource,
   DEFAULT_NAS,
+  type NasSettings,
   settingsJson,
 } from '../fileModels/settings.json'
 import { i18n } from '../i18n'
@@ -20,6 +21,37 @@ function intervalLabel(min: number): string {
 const intervalValues = Object.fromEntries(
   INTERVAL_CHOICES.map((m) => [String(m), intervalLabel(m)]),
 ) as Record<string, string>
+
+// The fields both Vaultwarden options share.
+function vaultFields() {
+  return {
+    item: Value.text({
+      name: i18n('Vaultwarden Item'),
+      description: i18n(
+        'The name of a Login item in your vault holding the NAS username and password. It is read before every copy, so a changed password is picked up by itself.',
+      ),
+      required: true,
+      default: null,
+    }),
+    email: Value.text({
+      name: i18n('Vaultwarden Account Email'),
+      required: true,
+      default: null,
+      inputmode: 'email' as const,
+    }),
+    masterPassword: Value.text({
+      name: i18n('Vaultwarden Master Password'),
+      description: i18n(
+        'Used to unlock the vault before each copy. It is stored in a root-only file on this server. Leave blank to keep the password already saved.',
+      ),
+      required: false,
+      default: null,
+      masked: true,
+    }),
+  }
+}
+
+const PEM_RE = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g
 
 // No defaults for the NAS details: the user enters every one of them.
 const enabledSpec = InputSpec.of({
@@ -117,30 +149,57 @@ const enabledSpec = InputSpec.of({
       },
       vaultwarden: {
         name: i18n('From Vaultwarden on this server'),
+        spec: InputSpec.of(vaultFields()),
+      },
+      'vaultwarden-url': {
+        name: i18n('From Vaultwarden at an address'),
         spec: InputSpec.of({
-          item: Value.text({
-            name: i18n('Vaultwarden Item'),
+          url: Value.text({
+            name: i18n('Vaultwarden URL'),
             description: i18n(
-              'The name of a Login item in your vault holding the NAS username and password. It is read before every copy, so a changed password is picked up by itself.',
+              'The address you open Vaultwarden at, starting with https://.',
             ),
             required: true,
             default: null,
+            placeholder: 'e.g. https://vault.example.lan',
+            patterns: [
+              {
+                regex: '^https?://[^/\\s]+/?$',
+                description: i18n(
+                  'An address such as https://vault.example.lan or https://10.0.0.5:8443, with nothing after the host and port.',
+                ),
+              },
+            ],
           }),
-          email: Value.text({
-            name: i18n('Vaultwarden Account Email'),
-            required: true,
-            default: null,
-            inputmode: 'email',
-          }),
-          masterPassword: Value.text({
-            name: i18n('Vaultwarden Master Password'),
+          ip: Value.text({
+            name: i18n('Vaultwarden IP Address'),
             description: i18n(
-              'Used to unlock the vault before each copy. It is stored in a private file on this server. Leave blank to keep the password already saved.',
+              'Only needed when the URL uses a name ending in .local, which StartOS services cannot look up: the IP address that name stands for. Leave blank otherwise.',
             ),
             required: false,
             default: null,
-            masked: true,
+            placeholder: 'e.g. 10.0.0.5',
+            patterns: [
+              {
+                regex:
+                  '^((25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(25[0-5]|2[0-4]\\d|1?\\d?\\d)$',
+                description: i18n('An IPv4 address, e.g. 10.0.0.5.'),
+              },
+            ],
           }),
+          caCert: Value.textarea({
+            name: i18n('Custom CA Certificate'),
+            description: i18n(
+              "Only needed when Vaultwarden's HTTPS certificate is signed by your own certificate authority, for example the root CA of the StartOS server that runs it. Paste the PEM block from -----BEGIN CERTIFICATE----- to -----END CERTIFICATE-----. It is a public certificate, not a private key.",
+            ),
+            required: false,
+            default: null,
+            minRows: 4,
+            maxRows: 12,
+            placeholder:
+              '-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----',
+          }),
+          ...vaultFields(),
         }),
       },
     }),
@@ -162,6 +221,33 @@ const inputSpec = InputSpec.of({
 })
 
 const clean = (s: string | null | undefined) => (s ?? '').trim()
+
+function credentialsPrefill(nas: NasSettings) {
+  const vault = {
+    item: nas.vaultItem || null,
+    email: nas.vaultEmail || null,
+    masterPassword: null, // never shown
+  }
+  switch (nas.credentialSource) {
+    case 'vaultwarden':
+      return { selection: 'vaultwarden', value: vault }
+    case 'vaultwarden-url':
+      return {
+        selection: 'vaultwarden-url',
+        value: {
+          url: nas.vaultUrl || null,
+          ip: nas.vaultIp || null,
+          caCert: nas.vaultCa || null,
+          ...vault,
+        },
+      }
+    default:
+      return {
+        selection: 'manual',
+        value: { username: nas.username || null, password: null },
+      }
+  }
+}
 
 export const configureNas = sdk.Action.withInput(
   'configure-nas',
@@ -194,20 +280,7 @@ export const configureNas = sdk.Action.withInput(
           folder: nas.folder || null,
           intervalMinutes: interval in intervalValues ? interval : '60',
           retentionDays: nas.retentionDays,
-          credentials:
-            nas.credentialSource === 'vaultwarden'
-              ? {
-                  selection: 'vaultwarden',
-                  value: {
-                    item: nas.vaultItem || null,
-                    email: nas.vaultEmail || null,
-                    masterPassword: null, // never shown
-                  },
-                }
-              : {
-                  selection: 'manual',
-                  value: { username: nas.username || null, password: null },
-                },
+          credentials: credentialsPrefill(nas),
         },
       },
     } as any
@@ -246,6 +319,9 @@ export const configureNas = sdk.Action.withInput(
       username: prev.username,
       vaultItem: prev.vaultItem,
       vaultEmail: prev.vaultEmail,
+      vaultUrl: prev.vaultUrl,
+      vaultIp: prev.vaultIp,
+      vaultCa: prev.vaultCa,
     }
     if (!next.folder) {
       throw new Error(i18n('Enter a folder inside the share.'))
@@ -261,7 +337,11 @@ export const configureNas = sdk.Action.withInput(
         throw new Error(i18n('Enter the NAS password.'))
       }
     } else {
-      const c = v.credentials.value
+      const c = v.credentials.value as {
+        item: string
+        email: string
+        masterPassword: string | null
+      }
       next.vaultItem = clean(c.item)
       next.vaultEmail = clean(c.email)
       if (c.masterPassword) {
@@ -270,9 +350,32 @@ export const configureNas = sdk.Action.withInput(
       if (!vaultMasterPassword) {
         throw new Error(i18n('Enter the Vaultwarden master password.'))
       }
+      if (v.credentials.selection === 'vaultwarden-url') {
+        const u = v.credentials.value
+        next.vaultUrl = clean(u.url).replace(/\/+$/, '')
+        next.vaultIp = clean(u.ip)
+        const pems = (u.caCert ?? '').match(PEM_RE) ?? []
+        if (clean(u.caCert) && !pems.length) {
+          throw new Error(
+            i18n(
+              'The CA certificate must be a PEM block from -----BEGIN CERTIFICATE----- to -----END CERTIFICATE-----.',
+            ),
+          )
+        }
+        next.vaultCa = pems.join('\n')
+        const host = new URL(next.vaultUrl).hostname
+        if (host.endsWith('.local') && !next.vaultIp) {
+          throw new Error(
+            i18n(
+              '"${host}" ends in .local, which StartOS services cannot look up. Enter the IP address it stands for.',
+              { host },
+            ),
+          )
+        }
+      }
     }
 
-    await secretsJson.write(effects, { nasPassword, vaultMasterPassword })
+    await writeSecrets(effects, { nasPassword, vaultMasterPassword })
     await settingsJson.merge(effects, { nas: next })
 
     return {
