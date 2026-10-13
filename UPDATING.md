@@ -29,7 +29,13 @@ command at the top of `requirements.txt`.
 
 ## rbw
 
-`RBW_VERSION` in the Dockerfile. The amd64 build uses the author's `.deb`;
+`RBW_VERSION` in the Dockerfile. rbw 1.15.0 (the newest release as of
+2026-10) cannot sign in to Vaultwarden 1.36 or later. When an rbw release
+supports it, bump rbw, drop the version limit from the Configure NAS Copy
+description, `instructions.md`, the README and collector.py's sign-in error,
+and consider offering Vaultwarden on the same server again (8.2504.0:2 has
+the code: bridge address of `vaultwarden`/`main`/80 and an optional
+dependency). The amd64 build uses the author's `.deb`;
 the arm64 binaries come from the `rbw-arm64-<version>` release of
 openclaw-extrabutter-startos (built there by its `build-rbw-arm64.yml`
 workflow) and are pinned by sha256. A new rbw version needs new arm64

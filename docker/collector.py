@@ -161,13 +161,15 @@ def credentials(nas):
         return c['username'], password
     item = c['item']
     if not c.get('baseUrl'):
-        raise PushError(
-            'Vaultwarden is not installed on this server; install it, '
-            'or choose another login option in Configure NAS Copy'
-        )
+        raise PushError('no Vaultwarden URL set; enter it in Configure NAS Copy')
     code, _, err = rbw('unlock')
     if code != 0:
-        raise PushError(f'Vaultwarden: could not unlock the vault: {first_line(err)}')
+        raise PushError(
+            f'Vaultwarden: could not sign in or unlock the vault: {first_line(err)}. '
+            'Check the URL, email and master password. rbw 1.15.0 works with '
+            'Vaultwarden up to 1.35.x; with 1.36 or later, enter the NAS login '
+            'in Configure NAS Copy instead'
+        )
     code, _, err = rbw('sync')
     if code != 0:
         # Keep going with rbw's local copy of the vault.

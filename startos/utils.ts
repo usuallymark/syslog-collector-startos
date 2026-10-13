@@ -41,10 +41,4 @@ export const RBW_ENV = {
   XDG_RUNTIME_DIR: `${RBW_DIR}/runtime`,
 }
 
-// Vaultwarden on this server, reached over the StartOS bridge (constants from
-// vaultwarden-startos: host id "main", internal HTTP port 80).
-export const VAULTWARDEN_ID = 'vaultwarden'
-export const VAULTWARDEN_HOST_ID = 'main'
-export const VAULTWARDEN_PORT = 80
-
 export const INTERVAL_CHOICES = [5, 15, 30, 60, 180, 360, 720, 1440] as const

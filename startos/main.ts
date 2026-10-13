@@ -25,9 +25,6 @@ import {
   RBW_ENV,
   RSYSLOG_CONF,
   SYSLOG_PORT,
-  VAULTWARDEN_HOST_ID,
-  VAULTWARDEN_ID,
-  VAULTWARDEN_PORT,
 } from './utils'
 
 const DAY_FILE = /^\d{4}-\d{2}-\d{2}\.log$/
@@ -150,28 +147,9 @@ export const main = sdk.setupMain(async ({ effects }) => {
   const nas: NasSettings = { ...DEFAULT_NAS, ...(stored?.nas ?? {}) }
   const vaultSource = nas.enabled ? nas.credentialSource : 'manual'
 
-  // Vaultwarden on this server is reached over the bridge (null while it is
-  // not installed; the NAS Copy check then says so). Vaultwarden elsewhere is
-  // reached at the URL the user entered.
-  const localVault =
-    vaultSource === 'vaultwarden'
-      ? await sdk.host
-          .getBridgeAddress(effects, {
-            packageId: VAULTWARDEN_ID,
-            hostId: VAULTWARDEN_HOST_ID,
-            internalPort: VAULTWARDEN_PORT,
-            ssl: false,
-          })
-          .const()
-      : null
+  // Vaultwarden is reached at the URL the user entered.
   const vaultBaseUrl =
-    vaultSource === 'vaultwarden'
-      ? localVault
-        ? `http://${localVault}`
-        : null
-      : vaultSource === 'vaultwarden-url'
-        ? nas.vaultUrl || null
-        : null
+    vaultSource === 'vaultwarden-url' ? nas.vaultUrl || null : null
 
   // secrets.json is root-only (installs from 8.2504.0:1 wrote it readable).
   await restrictSecrets()
@@ -370,14 +348,6 @@ export const main = sdk.setupMain(async ({ effects }) => {
             return {
               result: 'disabled',
               message: i18n('Off. Turn it on in Configure NAS Copy.'),
-            }
-          }
-          if (vaultSource === 'vaultwarden' && !vaultBaseUrl) {
-            return {
-              result: 'failure',
-              message: i18n(
-                'Vaultwarden is not installed on this server. Install it, or enter the NAS login in Configure NAS Copy.',
-              ),
             }
           }
           const target = `//${nas.host}/${nas.share}/${nas.folder}`

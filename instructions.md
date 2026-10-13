@@ -64,12 +64,11 @@ Open **Log Center > Log Sending**:
 - **Share** and **Folder**: where the files go, for example share `logs`, folder `syslog`. The folder is created if missing. Use a folder for these logs only: expired `YYYY-MM-DD.log` files in its device folders are deleted.
 - **Copy Interval**: from every 5 minutes to once a day (every hour by default). Today's file is copied again each time it has grown.
 - **Keep Logs on the NAS For**: 30 days by default.
-- **NAS Login**: an account that can write to the share. Three ways to give it:
+- **NAS Login**: an account that can write to the share. Two ways to give it:
   - **Enter here**: the NAS username and password.
-  - **From Vaultwarden on this server**: Vaultwarden installed on the same StartOS server.
-  - **From Vaultwarden at an address**: Vaultwarden running elsewhere. Enter its URL. If the URL uses a name ending in `.local`, also enter the IP address it stands for (StartOS services cannot look up `.local` names). If its HTTPS certificate is signed by your own certificate authority, for example the root CA of the StartOS server it runs on, paste that CA certificate.
+  - **From Vaultwarden**: create a Login item holding the NAS username and password, then enter Vaultwarden's URL, the item's name, your Vaultwarden account email and your master password. If the URL uses a name ending in `.local`, also enter the IP address it stands for (StartOS services cannot look up `.local` names). If Vaultwarden's HTTPS certificate is signed by your own certificate authority, for example the root CA of the StartOS server it runs on, paste that CA certificate. The item is read before every copy, so a changed NAS password is picked up by itself.
 
-  For both Vaultwarden options, create a Login item holding the NAS username and password, and enter the item's name, your Vaultwarden account email and your master password. The item is read before every copy, so a changed NAS password is picked up by itself.
+  **Vaultwarden version limit:** the bundled rbw 1.15.0, the newest release, cannot sign in to Vaultwarden 1.36 or later. The Vaultwarden option therefore works with Vaultwarden up to 1.35.x only, which also rules out the current Vaultwarden package on StartOS. With a newer Vaultwarden, use **Enter here**.
 
 The folder on the NAS mirrors the one here: `syslog/firewall/2026-10-13.log`. **Actions > Push Now** copies at once, and the **NAS Copy** health check shows when the last copy worked, or why it failed.
 
@@ -83,6 +82,7 @@ While the copy is on, a file is only deleted from this server after it has been 
 - Logs of StartOS itself are not collected.
 - Files older than the retention period are deleted, checked once an hour. Use the NAS copy, or back up, to keep them longer.
 - The NAS copy speaks SMB only.
+- Reading the NAS login from Vaultwarden works with Vaultwarden up to 1.35.x (see above).
 
 ## Backups
 

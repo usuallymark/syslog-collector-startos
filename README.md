@@ -18,7 +18,7 @@ the technical reference.
 | Volume | `main`, mounted at `/data` |
 | Daemons | `receiver` (`rsyslogd -n`), `housekeeping` (`collector housekeeping`, hourly), `pusher` (`collector push`, NAS copy; idle while off) |
 | Health checks | Receiver (port listening, and the external port StartOS assigned), Last Message, NAS Copy, Log Storage |
-| Dependencies | `vaultwarden` (optional; required only while the NAS login comes from Vaultwarden) |
+| Dependencies | none |
 
 ## Interface
 
@@ -67,10 +67,12 @@ for `/etc/collector.json`, the settings of `docker/collector.py`.
   UTC). Saving restarts the service.
 - **Configure NAS Copy**: off by default and empty. Host, share, folder,
   interval (5 min to 24 h, default 1 h), NAS retention days (default 30),
-  login entered, or read from a Vaultwarden Login item with rbw: Vaultwarden
-  on this server (reached over the StartOS bridge) or at a URL (optional IP
-  for a `.local` name, written to the container's `/etc/hosts`; optional
-  custom CA, appended to the system bundle and passed as `SSL_CERT_FILE`).
+  login entered, or read from a Vaultwarden Login item with rbw at a URL
+  (optional IP for a `.local` name, written to the container's `/etc/hosts`;
+  optional custom CA, appended to the system bundle and passed as
+  `SSL_CERT_FILE`). rbw 1.15.0 cannot sign in to Vaultwarden 1.36 or later,
+  so this works with Vaultwarden up to 1.35.x; a Vaultwarden on the same
+  StartOS server (1.37+) is therefore not offered (it was in :1 and :2).
   Passwords are never shown again; blank keeps the saved one. rbw's pinentry
   and collector.py read them from `secrets.json`.
 - **Push Now**: copies at once (the pusher polls for `/data/state/push-now`

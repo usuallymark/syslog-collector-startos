@@ -2,17 +2,13 @@ import { FileHelper, z } from '@start9labs/start-sdk'
 import { sdk } from '../sdk'
 
 // Settings, written by Configure Receiver and Configure NAS Copy and read by
-// main.ts, interfaces.ts and dependencies.ts. Every value has a default, so a
+// main.ts and interfaces.ts. Every value has a default, so a
 // missing or damaged file still yields a working receiver. Passwords are not
 // kept here but in secrets.json.
 export const FOLDER_NAMINGS = ['short', 'full', 'ip'] as const
 export type FolderNaming = (typeof FOLDER_NAMINGS)[number]
 
-export const CREDENTIAL_SOURCES = [
-  'manual',
-  'vaultwarden',
-  'vaultwarden-url',
-] as const
+export const CREDENTIAL_SOURCES = ['manual', 'vaultwarden-url'] as const
 export type CredentialSource = (typeof CREDENTIAL_SOURCES)[number]
 
 export const DEFAULT_SETTINGS = {

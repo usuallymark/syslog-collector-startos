@@ -124,7 +124,7 @@ const enabledSpec = InputSpec.of({
   credentials: Value.union({
     name: i18n('NAS Login'),
     description: i18n(
-      'The NAS account used to write the files. It needs write access to the share.',
+      'The NAS account used to write the files. It needs write access to the share. Reading it from Vaultwarden works with Vaultwarden up to version 1.35.x: the bundled rbw 1.15.0 cannot sign in to 1.36 or later. With a newer Vaultwarden, enter the login here.',
     ),
     default: 'manual',
     variants: Variants.of({
@@ -147,12 +147,8 @@ const enabledSpec = InputSpec.of({
           }),
         }),
       },
-      vaultwarden: {
-        name: i18n('From Vaultwarden on this server'),
-        spec: InputSpec.of(vaultFields()),
-      },
       'vaultwarden-url': {
-        name: i18n('From Vaultwarden at an address'),
+        name: i18n('From Vaultwarden'),
         spec: InputSpec.of({
           url: Value.text({
             name: i18n('Vaultwarden URL'),
@@ -229,8 +225,6 @@ function credentialsPrefill(nas: NasSettings) {
     masterPassword: null, // never shown
   }
   switch (nas.credentialSource) {
-    case 'vaultwarden':
-      return { selection: 'vaultwarden', value: vault }
     case 'vaultwarden-url':
       return {
         selection: 'vaultwarden-url',
@@ -381,14 +375,9 @@ export const configureNas = sdk.Action.withInput(
     return {
       version: '1' as const,
       title: i18n('NAS Copy Configured'),
-      message:
-        source === 'vaultwarden'
-          ? i18n(
-              'Saved. The service restarts and makes a first copy within a minute. Vaultwarden must be installed and running on this server. Watch the "NAS Copy" health check for the result.',
-            )
-          : i18n(
-              'Saved. The service restarts and makes a first copy within a minute. Watch the "NAS Copy" health check for the result.',
-            ),
+      message: i18n(
+        'Saved. The service restarts and makes a first copy within a minute. Watch the "NAS Copy" health check for the result.',
+      ),
       result: null,
     }
   },
