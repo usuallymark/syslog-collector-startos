@@ -1,32 +1,31 @@
 import { VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '8.2504.0:4',
+  version: '8.2504.0:5',
   releaseNotes: {
-    en_US: `Sender allow-list.
+    en_US: `An open receiver is now flagged.
 
-- **Allowed Senders** in Configure Receiver: IPv4 addresses, IPv4 CIDR ranges or IPv6 addresses. Messages from any other address are dropped before they are written, judged by the address they come from, not by the hostname inside them. An empty list accepts every sender, as before.
-- **Rejected Senders** health check: the last rejected address, when, and how many lines were dropped from it. Rejected lines are only counted, never stored, and the service log notes each address at most once an hour.`,
-    es_ES: `Lista de remitentes permitidos.
+- Without a sender allow-list, the **Rejected Senders** health check fails with "Danger: No allow-list: every sender is accepted", and a task asks you to add your devices in Configure Receiver. Both go away once a list is saved.
+- Messages are still accepted until then, so a first test works.`,
+    es_ES: `Ahora se señala un receptor abierto.
 
-- **Remitentes permitidos** en Configurar receptor: direcciones IPv4, rangos CIDR IPv4 o direcciones IPv6. Los mensajes de cualquier otra dirección se descartan antes de escribirse, según la dirección de la que vienen y no según el nombre de host que contienen. Una lista vacía acepta a todos los remitentes, como antes.
-- Comprobación **Remitentes rechazados**: la última dirección rechazada, cuándo y cuántas líneas suyas se descartaron. Las líneas rechazadas solo se cuentan, nunca se guardan, y el registro del servicio anota cada dirección como mucho una vez por hora.`,
-    de_DE: `Liste erlaubter Absender.
+- Sin lista de remitentes permitidos, la comprobación **Remitentes rechazados** falla con "Peligro: sin lista de permitidos: se acepta a todos los remitentes", y una tarea te pide añadir tus dispositivos en Configurar receptor. Ambas desaparecen al guardar una lista.
+- Hasta entonces se siguen aceptando mensajes, así que una primera prueba funciona.`,
+    de_DE: `Ein offener Empfänger wird jetzt markiert.
 
-- **Erlaubte Absender** unter Empfänger konfigurieren: IPv4-Adressen, IPv4-CIDR-Bereiche oder IPv6-Adressen. Meldungen von jeder anderen Adresse werden verworfen, bevor sie geschrieben werden, beurteilt nach der Adresse, von der sie kommen, nicht nach dem Hostnamen darin. Eine leere Liste nimmt wie bisher jeden Absender an.
-- Prüfung **Abgelehnte Absender**: die zuletzt abgelehnte Adresse, wann und wie viele Zeilen von ihr verworfen wurden. Abgelehnte Zeilen werden nur gezählt, nie gespeichert, und das Dienstprotokoll vermerkt jede Adresse höchstens einmal pro Stunde.`,
-    pl_PL: `Lista dozwolonych nadawców.
+- Ohne Liste erlaubter Absender schlägt die Prüfung **Abgelehnte Absender** fehl mit „Gefahr: Keine Liste erlaubter Absender: jeder Absender wird angenommen“, und eine Aufgabe bittet Sie, Ihre Geräte unter Empfänger konfigurieren einzutragen. Beides verschwindet, sobald eine Liste gespeichert ist.
+- Bis dahin werden Meldungen weiter angenommen, ein erster Test funktioniert also.`,
+    pl_PL: `Otwarty odbiornik jest teraz oznaczany.
 
-- **Dozwoleni nadawcy** w Skonfiguruj odbiornik: adresy IPv4, zakresy CIDR IPv4 lub adresy IPv6. Wiadomości z każdego innego adresu są odrzucane, zanim zostaną zapisane, na podstawie adresu, z którego przychodzą, a nie nazwy hosta w nich. Pusta lista przyjmuje każdego nadawcę, jak dotąd.
-- Kontrola **Odrzuceni nadawcy**: ostatni odrzucony adres, kiedy i ile jego linii odrzucono. Odrzucone linie są tylko liczone, nigdy zapisywane, a log usługi odnotowuje każdy adres najwyżej raz na godzinę.`,
-    fr_FR: `Liste des expéditeurs autorisés.
+- Bez listy dozwolonych nadawców kontrola **Odrzuceni nadawcy** zgłasza błąd „Niebezpieczeństwo: brak listy dozwolonych: każdy nadawca jest przyjmowany”, a zadanie prosi o dodanie urządzeń w Skonfiguruj odbiornik. Oba znikają po zapisaniu listy.
+- Do tego czasu wiadomości są nadal przyjmowane, więc pierwszy test działa.`,
+    fr_FR: `Un récepteur ouvert est désormais signalé.
 
-- **Expéditeurs autorisés** dans Configurer le récepteur : adresses IPv4, plages CIDR IPv4 ou adresses IPv6. Les messages de toute autre adresse sont écartés avant d'être écrits, d'après l'adresse d'où ils viennent et non d'après le nom d'hôte qu'ils contiennent. Une liste vide accepte tous les expéditeurs, comme avant.
-- Vérification **Expéditeurs rejetés** : la dernière adresse rejetée, quand, et combien de lignes en ont été écartées. Les lignes rejetées sont seulement comptées, jamais stockées, et le journal du service note chaque adresse au plus une fois par heure.`,
+- Sans liste d'expéditeurs autorisés, la vérification **Expéditeurs rejetés** échoue avec « Danger : pas de liste d'autorisation : tous les expéditeurs sont acceptés », et une tâche vous demande d'ajouter vos appareils dans Configurer le récepteur. Les deux disparaissent dès qu'une liste est enregistrée.
+- D'ici là, les messages restent acceptés : un premier test fonctionne.`,
   },
   migrations: {
     up: async () => {},
-    // Older versions keep the list in settings.json but ignore it.
     down: async () => {},
   },
 })

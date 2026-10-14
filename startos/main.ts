@@ -424,11 +424,13 @@ export const main = sdk.setupMain(async ({ effects }) => {
         display: i18n('Rejected Senders'),
         trigger: sdk.trigger.statusTrigger(60_000, { starting: 5_000 }),
         fn: async () => {
+          // An open receiver is a warning, not a choice to be quiet about:
+          // anyone on the network can write lines into the logs.
           if (!allowed.length) {
             return {
-              result: 'disabled',
+              result: 'failure',
               message: i18n(
-                'No allow-list: every sender is accepted. Add one in Configure Receiver.',
+                'Danger: No allow-list: every sender is accepted. Add one in Configure Receiver.',
               ),
             }
           }

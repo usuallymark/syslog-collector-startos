@@ -30,8 +30,9 @@ Folders are named after each device's short hostname (`firewall`) by default. Co
 1. Open **Interfaces > Syslog** and note the address and port (port **5514** by default).
 2. On each device, set that address and port as a remote syslog server. Examples are below.
 3. Check the **Last Message** health check on the dashboard. Within a minute of a device sending something, it shows the device's folder name.
-4. Optionally, run **Actions > Configure Receiver** to change the port, turn UDP or TCP off, limit which devices may send (below), change how folders are named, change how many days are kept on this server (3 by default), or pick your time zone (UTC by default; choose a region, then a city). The time zone decides when each daily file starts.
-5. Optionally, set up the copy to a NAS (below).
+4. Add your sending devices under **Configure Receiver > Allowed Senders** (the task on the service page takes you there). Until you do, the Rejected Senders check warns that every sender is accepted.
+5. Optionally, in **Actions > Configure Receiver**, change the port, turn UDP or TCP off, change how folders are named, change how many days are kept on this server (3 by default), or pick your time zone (UTC by default; choose a region, then a city). The time zone decides when each daily file starts.
+6. Optionally, set up the copy to a NAS (below).
 
 ### Example: OPNsense
 
@@ -58,11 +59,11 @@ Open **Log Center > Log Sending**:
 
 ## Limiting who can send
 
-By default, anything that can reach the address and port can write logs, including fake lines. In **Configure Receiver > Allowed Senders**, list the devices that may send: an IPv4 address (`10.0.0.1`), an IPv4 range (`10.0.0.0/24`) or an IPv6 address, each with an optional label. Messages from any other address are dropped before they are written.
+Until you set an allow-list, anything that can reach the address and port can write logs, including fake lines. Log Collector still accepts them, so your first test works, but it raises a task asking you to set the list, and the **Rejected Senders** health check shows a warning beginning "Danger: No allow-list". In **Configure Receiver > Allowed Senders**, list the devices that may send: an IPv4 address (`10.0.0.1`), an IPv4 range (`10.0.0.0/24`) or an IPv6 address, each with an optional label. Messages from any other address are dropped before they are written.
 
 The check uses the address a message actually comes from, not the hostname written inside it, which a sender can fake. A UDP sender address can still be forged on the local network, so prefer TCP on devices that support it.
 
-The **Rejected Senders** health check shows the last rejected address, when, and how many lines were dropped from it in the last 30 days. Rejected lines are only counted, never stored, so a flood cannot fill the disk; the service log notes each rejected address at most once an hour.
+Once a list is saved, the task goes away and **Rejected Senders** shows the last rejected address, when, and how many lines were dropped from it in the last 30 days. Rejected lines are only counted, never stored, so a flood cannot fill the disk; the service log notes each rejected address at most once an hour.
 
 ## Copying the logs to a NAS
 

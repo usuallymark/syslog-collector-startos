@@ -88,7 +88,10 @@ RainerScript test on `$fromhost-ip` (IPv4 via `ip42num`) at the top of the
 and `stop`, so nothing of them is written. impstats writes the counters to
 `/data/state/rsyslog-stats.json` every 60 s; `collector housekeeping` folds
 them into `rejected.json` every minute, empties the stats file, and logs each
-IP at most once an hour. With an empty list none of this is loaded.
+IP at most once an hour. With an empty list none of this is loaded and every
+sender is accepted, but the Rejected Senders check reports failure ("Danger:
+No allow-list…") and init raises an important task for Configure Receiver
+(`init/taskAllowedSenders.ts`), cleared once a list is saved.
 
 ## NAS copy
 
