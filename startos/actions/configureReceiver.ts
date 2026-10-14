@@ -1,10 +1,12 @@
 import {
+  DEFAULT_NAS,
   DEFAULT_SETTINGS,
   type FolderNaming,
   settingsJson,
 } from '../fileModels/settings.json'
 import { i18n } from '../i18n'
 import { sdk } from '../sdk'
+import { parseSender } from '../senders'
 import {
   REGIONS,
   UTC,
@@ -125,6 +127,38 @@ const inputSpec = InputSpec.of({
     default: UTC,
     variants: Variants.of(timezoneVariants),
   }),
+  allowedSenders: Value.list(
+    sdk.List.obj(
+      {
+        name: i18n('Allowed Senders'),
+        description: i18n(
+          'Only accept messages from these addresses. Leave the list empty to accept every sender. Messages from anywhere else are dropped before they are written, and counted in the Rejected Senders health check. The check uses the address a message comes from, not the hostname inside it. A UDP sender address can be forged, so prefer TCP on devices that support it.',
+        ),
+        default: [],
+      },
+      {
+        spec: InputSpec.of({
+          address: Value.text({
+            name: i18n('Address'),
+            description: i18n(
+              'An IPv4 address (10.0.0.1), an IPv4 range in CIDR form (10.0.0.0/24), or an IPv6 address.',
+            ),
+            required: true,
+            default: null,
+            placeholder: 'e.g. 10.0.0.1',
+          }),
+          label: Value.text({
+            name: i18n('Label'),
+            description: i18n('Optional, for your reference, e.g. firewall.'),
+            required: false,
+            default: null,
+          }),
+        }),
+        displayAs: '{{address}} {{label}}',
+        uniqueBy: 'address',
+      },
+    ),
+  ),
 })
 
 export const configureReceiver = sdk.Action.withInput(
@@ -133,7 +167,7 @@ export const configureReceiver = sdk.Action.withInput(
   async () => ({
     name: i18n('Configure Receiver'),
     description: i18n(
-      'Choose the port and protocols devices send to, how device folders are named, how long logs are kept on this server, and the time zone.',
+      'Choose the port and protocols devices send to, which senders are accepted, how device folders are named, how long logs are kept on this server, and the time zone.',
     ),
     warning: null,
     allowedStatuses: 'any',
@@ -160,6 +194,10 @@ export const configureReceiver = sdk.Action.withInput(
       folderNaming: s.folderNaming,
       retentionDays: s.retentionDays,
       timezone,
+      allowedSenders: s.allowedSenders.map((a) => ({
+        address: a.address,
+        label: a.label || null,
+      })),
     } as any
   },
 
@@ -181,13 +219,33 @@ export const configureReceiver = sdk.Action.withInput(
       )
     }
 
-    await settingsJson.merge(effects, {
+    const allowedSenders = (input.allowedSenders ?? []).map((a) => ({
+      address: a.address.trim(),
+      label: (a.label ?? '').trim(),
+    }))
+    const invalid = allowedSenders.find((a) => !parseSender(a.address))
+    if (invalid) {
+      throw new Error(
+        i18n(
+          '"${address}" is not an IPv4 address, an IPv4 CIDR range or an IPv6 address.',
+          { address: invalid.address },
+        ),
+      )
+    }
+
+    // Written whole, so a shortened sender list replaces the old one.
+    const current = await settingsJson.read().once()
+    await settingsJson.write(effects, {
+      ...DEFAULT_SETTINGS,
+      nas: DEFAULT_NAS,
+      ...(current ?? {}),
       port: input.port,
       udp: input.udp,
       tcp: input.tcp,
       folderNaming: input.folderNaming,
       retentionDays: input.retentionDays,
       timezone,
+      allowedSenders,
     })
 
     return {

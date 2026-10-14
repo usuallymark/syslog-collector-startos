@@ -28,6 +28,8 @@ LOGS_DIR = os.environ.get('LOGS_DIR', '/data/logs')
 STATE_DIR = os.environ.get('STATE_DIR', '/data/state')
 STATE_FILE = os.path.join(STATE_DIR, 'nas-push.json')
 PUSH_NOW = os.path.join(STATE_DIR, 'push-now')
+RSYSLOG_STATS = os.path.join(STATE_DIR, 'rsyslog-stats.json')
+REJECTED_FILE = os.path.join(STATE_DIR, 'rejected.json')
 
 DAY_FILE = re.compile(r'^\d{4}-\d{2}-\d{2}\.log$')
 
@@ -120,13 +122,105 @@ def housekeeping_once(cfg):
         log(f'housekeeping: kept {kept} expired file(s) that are not on the NAS yet')
 
 
-def housekeeping(cfg):
-    while True:
+# ── Rejected senders ────────────────────────────────────────────────────────
+
+
+def read_reject_counters():
+    """rsyslog's per-IP reject counters (counts since rsyslog started), from
+    the newest "rejected" line impstats wrote; then empty the stats file so
+    it never grows. None if impstats wrote nothing since the last read."""
+    try:
+        with open(RSYSLOG_STATS) as f:
+            lines = f.readlines()
+        with open(RSYSLOG_STATS, 'w'):
+            pass
+    except OSError:
+        return None
+    latest = None
+    for line in lines:
+        start = line.find('{')
+        if start < 0:
+            continue
         try:
-            housekeeping_once(cfg)
-        except Exception as e:  # keep running; try again next hour
-            log(f'housekeeping: {e}')
-        time.sleep(3600)
+            rec = json.loads(line[start:])
+        except ValueError:
+            continue
+        if rec.get('origin') == 'dynstats.bucket' and rec.get('name') == 'rejected':
+            latest = rec.get('values') or {}
+    return latest
+
+
+def load_json(path, default):
+    try:
+        with open(path) as f:
+            v = json.load(f)
+        return v if isinstance(v, type(default)) else default
+    except (OSError, ValueError):
+        return default
+
+
+def save_json(path, value):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(value, f, indent=2, sort_keys=True)
+    os.replace(tmp, path)
+
+
+def rejected_once(started_at):
+    """Fold new reject counts into rejected.json (totals, last seen, and the
+    most recent rejected IP), and log each IP at most once an hour."""
+    counters = read_reject_counters()
+    if counters is None:
+        return
+    state = load_json(REJECTED_FILE, {})
+    ips = state.setdefault('ips', {})
+    # Counters restart at zero when rsyslog restarts.
+    if state.get('since') != started_at:
+        state['since'] = started_at
+        for e in ips.values():
+            e['counter'] = 0
+    now = time.time()
+    for ip, count in counters.items():
+        e = ips.setdefault(ip, {'total': 0, 'counter': 0})
+        delta = count - e.get('counter', 0)
+        if delta < 0:
+            delta = count
+        e['counter'] = count
+        if delta <= 0:
+            continue
+        e['total'] = e.get('total', 0) + delta
+        e['lastSeen'] = now_iso()
+        state['last'] = {'ip': ip, 'at': e['lastSeen']}
+        e.setdefault('pending', 0)
+        e['pending'] += delta
+        if now - e.get('lastLogged', 0) >= 3600:
+            log(f'allow-list: rejected {e["pending"]} line(s) from {ip}')
+            e['lastLogged'] = now
+            e['pending'] = 0
+    # Forget IPs not seen for 30 days.
+    cutoff_iso = (datetime.datetime.now().astimezone() - datetime.timedelta(days=30)).isoformat()
+    for ip in [ip for ip, e in ips.items() if e.get('lastSeen', '') < cutoff_iso and ip not in counters]:
+        del ips[ip]
+    save_json(REJECTED_FILE, state)
+
+
+def housekeeping(cfg):
+    started_at = now_iso()
+    next_retention = 0.0
+    while True:
+        if time.time() >= next_retention:
+            try:
+                housekeeping_once(cfg)
+            except Exception as e:  # keep running; try again next hour
+                log(f'housekeeping: {e}')
+            next_retention = time.time() + 3600
+        if cfg.get('allowList'):
+            try:
+                rejected_once(started_at)
+            except Exception as e:
+                log(f'allow-list: {e}')
+        time.sleep(60)
 
 
 # ── Credentials ─────────────────────────────────────────────────────────────

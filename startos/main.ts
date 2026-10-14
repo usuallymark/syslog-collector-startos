@@ -16,12 +16,15 @@ import {
 import { i18n } from './i18n'
 import { syslogHostId } from './interfaces'
 import { rsyslogConf } from './rsyslogConf'
+import { parseSender } from './senders'
 import { sdk } from './sdk'
 import {
   CA_BUNDLE,
   COLLECTOR_CONF,
   LOGS_DIR,
   PUSH_STATE,
+  REJECTED_STATE,
+  RSYSLOG_STATS,
   RBW_ENV,
   RSYSLOG_CONF,
   SYSLOG_PORT,
@@ -106,6 +109,21 @@ async function readPushState(): Promise<PushState> {
   }
 }
 
+type RejectedState = {
+  last?: { ip: string; at: string }
+  ips?: Record<string, { total?: number; lastSeen?: string }>
+}
+
+async function readRejected(): Promise<RejectedState> {
+  try {
+    return JSON.parse(
+      await readFile(sdk.volumes.main.subpath(REJECTED_STATE), 'utf8'),
+    ) as RejectedState
+  } catch {
+    return {}
+  }
+}
+
 /** collector.py's NAS settings, or null while the copy is off. Passwords
  * are not included: collector.py reads them from secrets.json. */
 function collectorNas(nas: NasSettings, vaultBaseUrl: string | null) {
@@ -154,6 +172,11 @@ export const main = sdk.setupMain(async ({ effects }) => {
   // secrets.json is root-only (installs from 8.2504.0:1 wrote it readable).
   await restrictSecrets()
 
+  // Valid allow-list entries (the action rejects invalid ones on save).
+  const allowed = settings.allowedSenders
+    .map((s) => s.address.trim())
+    .filter((a) => parseSender(a) !== null)
+
   const protocols = [settings.udp && 'UDP', settings.tcp && 'TCP']
     .filter(Boolean)
     .join(' + ')
@@ -179,11 +202,14 @@ export const main = sdk.setupMain(async ({ effects }) => {
       tcp: settings.tcp,
       folderNaming: settings.folderNaming,
       logsDir: LOGS_DIR,
+      allowedSenders: allowed,
+      statsFile: RSYSLOG_STATS,
     }),
   )
 
   const collectorConfig = {
     localRetentionDays: settings.retentionDays,
+    allowList: allowed.length > 0,
     nas: collectorNas(nas, vaultBaseUrl),
   }
   await writeFile(
@@ -392,6 +418,45 @@ export const main = sdk.setupMain(async ({ effects }) => {
         },
       },
       requires: [],
+    })
+    .addHealthCheck('rejected-senders', {
+      ready: {
+        display: i18n('Rejected Senders'),
+        trigger: sdk.trigger.statusTrigger(60_000, { starting: 5_000 }),
+        fn: async () => {
+          if (!allowed.length) {
+            return {
+              result: 'disabled',
+              message: i18n(
+                'No allow-list: every sender is accepted. Add one in Configure Receiver.',
+              ),
+            }
+          }
+          const s = await readRejected()
+          const last = s.last
+          const entry = last ? s.ips?.[last.ip] : undefined
+          if (!last || !entry) {
+            return {
+              result: 'success',
+              message: i18n('None rejected. ${count} allowed sender(s).', {
+                count: String(allowed.length),
+              }),
+            }
+          }
+          return {
+            result: 'success',
+            message: i18n(
+              'Last rejected: ${ip}, ${age} ago (${total} line(s) dropped from it in the last 30 days)',
+              {
+                ip: last.ip,
+                age: age(Date.now() - Date.parse(last.at)),
+                total: String(entry.total ?? 0),
+              },
+            ),
+          }
+        },
+      },
+      requires: ['receiver'],
     })
     .addHealthCheck('storage', {
       ready: {

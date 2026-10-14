@@ -30,7 +30,7 @@ Folders are named after each device's short hostname (`firewall`) by default. Co
 1. Open **Interfaces > Syslog** and note the address and port (port **5514** by default).
 2. On each device, set that address and port as a remote syslog server. Examples are below.
 3. Check the **Last Message** health check on the dashboard. Within a minute of a device sending something, it shows the device's folder name.
-4. Optionally, run **Actions > Configure Receiver** to change the port, turn UDP or TCP off, change how folders are named, change how many days are kept on this server (3 by default), or pick your time zone (UTC by default; choose a region, then a city). The time zone decides when each daily file starts.
+4. Optionally, run **Actions > Configure Receiver** to change the port, turn UDP or TCP off, limit which devices may send (below), change how folders are named, change how many days are kept on this server (3 by default), or pick your time zone (UTC by default; choose a region, then a city). The time zone decides when each daily file starts.
 5. Optionally, set up the copy to a NAS (below).
 
 ### Example: OPNsense
@@ -56,6 +56,14 @@ Open **Log Center > Log Sending**:
 - **Log format**: BSD (RFC 3164) or IETF (RFC 5424); both work
 - Leave **Enable secure connection (SSL/TLS)** off
 
+## Limiting who can send
+
+By default, anything that can reach the address and port can write logs, including fake lines. In **Configure Receiver > Allowed Senders**, list the devices that may send: an IPv4 address (`10.0.0.1`), an IPv4 range (`10.0.0.0/24`) or an IPv6 address, each with an optional label. Messages from any other address are dropped before they are written.
+
+The check uses the address a message actually comes from, not the hostname written inside it, which a sender can fake. A UDP sender address can still be forged on the local network, so prefer TCP on devices that support it.
+
+The **Rejected Senders** health check shows the last rejected address, when, and how many lines were dropped from it in the last 30 days. Rejected lines are only counted, never stored, so a flood cannot fill the disk; the service log notes each rejected address at most once an hour.
+
 ## Copying the logs to a NAS
 
 **Actions > Configure NAS Copy** copies the daily files to a shared folder on a NAS over SMB, on a schedule. It starts off, and every detail is yours to enter:
@@ -78,7 +86,7 @@ While the copy is on, a file is only deleted from this server after it has been 
 
 - **No port 514.** StartOS keeps ports below 1025 for itself, so devices must be able to send to a custom port. Most firewalls, NAS systems and servers can; a few simple home routers cannot.
 - **No encryption (TLS) yet.** Messages travel across your network in plain text, like standard syslog. Do not expose the Syslog interface to the internet.
-- **No sender filtering yet.** Any device that can reach the address and port can write logs.
+- **Sender filtering is by address only.** Without an allow-list, any device that can reach the port can write logs; with one, a forged UDP source address can still get through. Prefer TCP.
 - Logs of StartOS itself are not collected.
 - Files older than the retention period are deleted, checked once an hour. Use the NAS copy, or back up, to keep them longer.
 - The NAS copy speaks SMB only.

@@ -1,49 +1,32 @@
 import { VersionInfo } from '@start9labs/start-sdk'
-import { sdk } from '../sdk'
-
-// The "Vaultwarden on this server" login is gone: settings that used it fall
-// back to "Enter here", and the NAS Copy check asks for the login.
-async function dropLocalVaultwarden() {
-  const path = 'settings.json'
-  let raw: { nas?: { credentialSource?: string } }
-  try {
-    raw = JSON.parse(String(await sdk.volumes.main.readFile(path, 'utf8')))
-  } catch {
-    return
-  }
-  if (raw.nas?.credentialSource === 'vaultwarden') {
-    raw.nas.credentialSource = 'manual'
-    await sdk.volumes.main.writeFile(path, JSON.stringify(raw, null, 2))
-  }
-}
 
 export const current = VersionInfo.of({
-  version: '8.2504.0:3',
+  version: '8.2504.0:4',
   releaseNotes: {
-    en_US: `Vaultwarden login: one option that works, and its limit stated.
+    en_US: `Sender allow-list.
 
-- **"From Vaultwarden on this server" is removed.** The bundled rbw 1.15.0 (the newest release) cannot sign in to Vaultwarden 1.36 or later, and the Vaultwarden package on StartOS is newer than that, so the option could never work. Installs that chose it fall back to "Enter here".
-- **"From Vaultwarden"** (at a URL, as before) works with Vaultwarden up to 1.35.x. The form says so, and a failed sign-in now says so too.`,
-    es_ES: `Inicio de sesión con Vaultwarden: una opción que funciona y su límite indicado.
+- **Allowed Senders** in Configure Receiver: IPv4 addresses, IPv4 CIDR ranges or IPv6 addresses. Messages from any other address are dropped before they are written, judged by the address they come from, not by the hostname inside them. An empty list accepts every sender, as before.
+- **Rejected Senders** health check: the last rejected address, when, and how many lines were dropped from it. Rejected lines are only counted, never stored, and the service log notes each address at most once an hour.`,
+    es_ES: `Lista de remitentes permitidos.
 
-- **Se elimina "Desde Vaultwarden en este servidor".** El rbw 1.15.0 incluido (la versión más reciente) no puede iniciar sesión en Vaultwarden 1.36 o posterior, y el paquete de Vaultwarden de StartOS es más nuevo, así que la opción nunca podía funcionar. Las instalaciones que la usaban pasan a "Introducir aquí".
-- **"Desde Vaultwarden"** (en una URL, como antes) funciona con Vaultwarden hasta la 1.35.x. El formulario lo indica, y un inicio de sesión fallido también.`,
-    de_DE: `Vaultwarden-Anmeldung: eine Option, die funktioniert, mit genannter Grenze.
+- **Remitentes permitidos** en Configurar receptor: direcciones IPv4, rangos CIDR IPv4 o direcciones IPv6. Los mensajes de cualquier otra dirección se descartan antes de escribirse, según la dirección de la que vienen y no según el nombre de host que contienen. Una lista vacía acepta a todos los remitentes, como antes.
+- Comprobación **Remitentes rechazados**: la última dirección rechazada, cuándo y cuántas líneas suyas se descartaron. Las líneas rechazadas solo se cuentan, nunca se guardan, y el registro del servicio anota cada dirección como mucho una vez por hora.`,
+    de_DE: `Liste erlaubter Absender.
 
-- **„Aus Vaultwarden auf diesem Server“ entfällt.** Das mitgelieferte rbw 1.15.0 (die neueste Version) kann sich nicht bei Vaultwarden 1.36 oder neuer anmelden, und das Vaultwarden-Paket von StartOS ist neuer, daher konnte die Option nie funktionieren. Installationen damit wechseln zu „Hier eingeben“.
-- **„Aus Vaultwarden“** (unter einer URL, wie bisher) funktioniert mit Vaultwarden bis 1.35.x. Das Formular sagt es, und eine fehlgeschlagene Anmeldung jetzt auch.`,
-    pl_PL: `Logowanie przez Vaultwarden: jedna działająca opcja i podany limit.
+- **Erlaubte Absender** unter Empfänger konfigurieren: IPv4-Adressen, IPv4-CIDR-Bereiche oder IPv6-Adressen. Meldungen von jeder anderen Adresse werden verworfen, bevor sie geschrieben werden, beurteilt nach der Adresse, von der sie kommen, nicht nach dem Hostnamen darin. Eine leere Liste nimmt wie bisher jeden Absender an.
+- Prüfung **Abgelehnte Absender**: die zuletzt abgelehnte Adresse, wann und wie viele Zeilen von ihr verworfen wurden. Abgelehnte Zeilen werden nur gezählt, nie gespeichert, und das Dienstprotokoll vermerkt jede Adresse höchstens einmal pro Stunde.`,
+    pl_PL: `Lista dozwolonych nadawców.
 
-- **Usunięto „Z Vaultwarden na tym serwerze”.** Dołączony rbw 1.15.0 (najnowsze wydanie) nie potrafi zalogować się do Vaultwarden 1.36 lub nowszego, a pakiet Vaultwarden w StartOS jest nowszy, więc ta opcja nigdy nie mogła działać. Instalacje, które ją wybrały, przechodzą na „Wpisz tutaj”.
-- **„Z Vaultwarden”** (pod adresem URL, jak dotąd) działa z Vaultwarden do wersji 1.35.x. Formularz to podaje, a nieudane logowanie również.`,
-    fr_FR: `Identifiant via Vaultwarden : une option qui fonctionne, et sa limite indiquée.
+- **Dozwoleni nadawcy** w Skonfiguruj odbiornik: adresy IPv4, zakresy CIDR IPv4 lub adresy IPv6. Wiadomości z każdego innego adresu są odrzucane, zanim zostaną zapisane, na podstawie adresu, z którego przychodzą, a nie nazwy hosta w nich. Pusta lista przyjmuje każdego nadawcę, jak dotąd.
+- Kontrola **Odrzuceni nadawcy**: ostatni odrzucony adres, kiedy i ile jego linii odrzucono. Odrzucone linie są tylko liczone, nigdy zapisywane, a log usługi odnotowuje każdy adres najwyżej raz na godzinę.`,
+    fr_FR: `Liste des expéditeurs autorisés.
 
-- **« Depuis Vaultwarden sur ce serveur » est supprimé.** Le rbw 1.15.0 intégré (la dernière version) ne peut pas se connecter à Vaultwarden 1.36 ou plus récent, et le paquet Vaultwarden de StartOS est plus récent : l'option ne pouvait donc jamais fonctionner. Les installations qui l'utilisaient passent à « Saisir ici ».
-- **« Depuis Vaultwarden »** (à une URL, comme avant) fonctionne avec Vaultwarden jusqu'à 1.35.x. Le formulaire l'indique, et une connexion échouée aussi.`,
+- **Expéditeurs autorisés** dans Configurer le récepteur : adresses IPv4, plages CIDR IPv4 ou adresses IPv6. Les messages de toute autre adresse sont écartés avant d'être écrits, d'après l'adresse d'où ils viennent et non d'après le nom d'hôte qu'ils contiennent. Une liste vide accepte tous les expéditeurs, comme avant.
+- Vérification **Expéditeurs rejetés** : la dernière adresse rejetée, quand, et combien de lignes en ont été écartées. Les lignes rejetées sont seulement comptées, jamais stockées, et le journal du service note chaque adresse au plus une fois par heure.`,
   },
   migrations: {
-    up: dropLocalVaultwarden,
-    // :2 still knows "manual" and "vaultwarden-url"; nothing to undo.
+    up: async () => {},
+    // Older versions keep the list in settings.json but ignore it.
     down: async () => {},
   },
 })

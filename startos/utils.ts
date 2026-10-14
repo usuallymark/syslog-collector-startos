@@ -41,4 +41,9 @@ export const RBW_ENV = {
   XDG_RUNTIME_DIR: `${RBW_DIR}/runtime`,
 }
 
+// Sender allow-list: rsyslog's per-IP reject counters (written by impstats
+// every minute), and collector.py's summary of them for the health check.
+export const RSYSLOG_STATS = '/data/state/rsyslog-stats.json'
+export const REJECTED_STATE = 'state/rejected.json'
+
 export const INTERVAL_CHOICES = [5, 15, 30, 60, 180, 360, 720, 1440] as const

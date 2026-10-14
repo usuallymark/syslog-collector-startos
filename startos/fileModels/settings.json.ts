@@ -11,6 +11,8 @@ export type FolderNaming = (typeof FOLDER_NAMINGS)[number]
 export const CREDENTIAL_SOURCES = ['manual', 'vaultwarden-url'] as const
 export type CredentialSource = (typeof CREDENTIAL_SOURCES)[number]
 
+export type AllowedSender = { address: string; label: string }
+
 export const DEFAULT_SETTINGS = {
   port: 5514,
   udp: true,
@@ -18,6 +20,8 @@ export const DEFAULT_SETTINGS = {
   folderNaming: 'short' as FolderNaming,
   retentionDays: 3,
   timezone: 'UTC',
+  // Empty: accept every sender.
+  allowedSenders: [] as AllowedSender[],
 }
 
 // The NAS copy starts off and empty: every detail comes from the user.
@@ -77,6 +81,14 @@ const shape = z.looseObject({
     .max(3650)
     .catch(DEFAULT_SETTINGS.retentionDays),
   timezone: z.string().min(1).catch(DEFAULT_SETTINGS.timezone),
+  allowedSenders: z
+    .array(
+      z.looseObject({
+        address: z.string(),
+        label: z.string().catch(''),
+      }),
+    )
+    .catch([]),
   nas: nasShape.catch(DEFAULT_NAS),
 })
 

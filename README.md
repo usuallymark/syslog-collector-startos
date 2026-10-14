@@ -17,7 +17,7 @@ the technical reference.
 | Architectures | x86_64, aarch64 |
 | Volume | `main`, mounted at `/data` |
 | Daemons | `receiver` (`rsyslogd -n`), `housekeeping` (`collector housekeeping`, hourly), `pusher` (`collector push`, NAS copy; idle while off) |
-| Health checks | Receiver (port listening, and the external port StartOS assigned), Last Message, NAS Copy, Log Storage |
+| Health checks | Receiver (port listening, and the external port StartOS assigned), Last Message, Rejected Senders, NAS Copy, Log Storage |
 | Dependencies | none |
 
 ## Interface
@@ -42,6 +42,8 @@ addresses the user enables. Syslog itself is unencrypted.
 | `/data/secrets.json` | NAS password and Vaultwarden master password (mode 600; the only copy) |
 | `/data/logs/<sender>/<YYYY-MM-DD>.log` | Received messages |
 | `/data/state/nas-push.json` | NAS copy state: last attempt, success and error, copied sizes |
+| `/data/state/rsyslog-stats.json` | impstats output (per-IP reject counters), emptied by collector.py every minute |
+| `/data/state/rejected.json` | Rejected senders: totals, last seen, most recent (30 days) |
 | `/data/rbw/` | rbw configuration, login and local (encrypted) vault copy |
 
 `<sender>` is the short hostname (up to the first dot, unless the hostname is
@@ -78,6 +80,16 @@ for `/etc/collector.json`, the settings of `docker/collector.py`.
 - **Push Now**: copies at once (the pusher polls for `/data/state/push-now`
   every 10 s).
 
+## Sender allow-list
+
+Configure Receiver's Allowed Senders (IPv4, IPv4 CIDR, IPv6) become a
+RainerScript test on `$fromhost-ip` (IPv4 via `ip42num`) at the top of the
+`remote` ruleset. Rejected messages hit `dyn_inc("rejected", $fromhost-ip)`
+and `stop`, so nothing of them is written. impstats writes the counters to
+`/data/state/rsyslog-stats.json` every 60 s; `collector housekeeping` folds
+them into `rejected.json` every minute, empties the stats file, and logs each
+IP at most once an hour. With an empty list none of this is loaded.
+
 ## NAS copy
 
 Each run copies every `YYYY-MM-DD.log` whose size differs from the size last
@@ -100,8 +112,8 @@ The whole `main` volume.
 
 ## Not (yet) included
 
-TLS syslog, sender allow-lists, NAS protocols other than SMB, and collecting
-StartOS's own logs.
+TLS syslog, alerting, NAS protocols other than SMB, and collecting StartOS's
+own logs.
 
 ## Building
 
