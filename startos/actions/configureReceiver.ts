@@ -1,6 +1,8 @@
 import {
+  DEFAULT_ALERTS,
   DEFAULT_NAS,
   DEFAULT_SETTINGS,
+  DEFAULT_VAULTWARDEN,
   type FolderNaming,
   settingsJson,
 } from '../fileModels/settings.json'
@@ -238,6 +240,8 @@ export const configureReceiver = sdk.Action.withInput(
     await settingsJson.write(effects, {
       ...DEFAULT_SETTINGS,
       nas: DEFAULT_NAS,
+      vaultwarden: DEFAULT_VAULTWARDEN,
+      alerts: DEFAULT_ALERTS,
       ...(current ?? {}),
       port: input.port,
       udp: input.udp,

@@ -1,6 +1,6 @@
 # Log Collector
 
-Log Collector receives syslog from devices on your network and writes it into plain text files: one folder per device, one file per day. It can also copy those files to a shared folder on a NAS. Nothing needs to be set up before it starts; the defaults work.
+Log Collector receives syslog from devices on your network and writes it into plain text files: one folder per device, one file per day. It can also copy those files to a shared folder on a NAS, and send short alerts to your phone through ntfy. Nothing needs to be set up before it starts; the defaults work.
 
 ## Where the logs go
 
@@ -32,7 +32,7 @@ Folders are named after each device's short hostname (`firewall`) by default. Co
 3. Check the **Last Message** health check on the dashboard. Within a minute of a device sending something, it shows the device's folder name.
 4. Add your sending devices under **Configure Receiver > Allowed Senders** (the task on the service page takes you there). Until you do, the Rejected Senders check warns that every sender is accepted.
 5. Optionally, in **Actions > Configure Receiver**, change the port, turn UDP or TCP off, change how folders are named, change how many days are kept on this server (3 by default), or pick your time zone (UTC by default; choose a region, then a city). The time zone decides when each daily file starts.
-6. Optionally, set up the copy to a NAS (below).
+6. Optionally, set up the copy to a NAS and alerts (below).
 
 ### Example: OPNsense
 
@@ -75,13 +75,36 @@ Once a list is saved, the task goes away and **Rejected Senders** shows the last
 - **Keep Logs on the NAS For**: 30 days by default.
 - **NAS Login**: an account that can write to the share. Two ways to give it:
   - **Enter here**: the NAS username and password.
-  - **From Vaultwarden**: create a Login item holding the NAS username and password, then enter Vaultwarden's URL, the item's name, your Vaultwarden account email and your master password. If the URL uses a name ending in `.local`, also enter the IP address it stands for (StartOS services cannot look up `.local` names). If Vaultwarden's HTTPS certificate is signed by your own certificate authority, for example the root CA of the StartOS server it runs on, paste that CA certificate. The item is read before every copy, so a changed NAS password is picked up by itself.
-
-  **Vaultwarden version limit:** the bundled rbw 1.15.0, the newest release, cannot sign in to Vaultwarden 1.36 or later. The Vaultwarden option therefore works with Vaultwarden up to 1.35.x only, which also rules out the current Vaultwarden package on StartOS. With a newer Vaultwarden, use **Enter here**.
+  - **From Vaultwarden**: the name of a Login item holding the NAS username and password, read before every copy, so a changed NAS password is picked up by itself. Needs Vaultwarden set up (below).
 
 The folder on the NAS mirrors the one here: `syslog/firewall/2026-10-13.log`. **Actions > Push Now** copies at once, and the **NAS Copy** health check shows when the last copy worked, or why it failed.
 
 While the copy is on, a file is only deleted from this server after it has been copied in its final state, even when the NAS is unreachable for longer than the retention period. Watch the **Log Storage** check if that happens.
+
+## Alerts
+
+**Actions > Configure Alerts** sends short alerts to your phone through [ntfy](https://ntfy.sh) when something needs attention right away. It starts off. You need an ntfy server (your own, or ntfy.sh) and a topic, subscribed in the ntfy app on your phone. If the server's name ends in `.local`, also enter its IP address; if its certificate comes from your own certificate authority, paste that CA certificate. If the topic is protected, add an access token (starts with `tk_`; create one in the ntfy web app under Account > Access tokens), either entered here or read from Vaultwarden (below): name the item and the field holding the token (a hidden custom field such as `api_key`, or `password`). Best practice is a dedicated ntfy user that may only write to this topic.
+
+Built-in rules, each on by default and adjustable:
+
+- **Logging stopped**: a device on the allow-list has sent nothing for 15 minutes, and again when it resumes. Watches single addresses on the allow-list (not ranges), named by their label.
+- **Unknown sender**: an address not on the allow-list tried to send.
+- **High-severity message**: a syslog message of severity critical, alert or emergency from any device.
+- **Volume spike**: a device sends 10 times its usual rate within 10 minutes (and at least 200 lines). Starts after 6 hours of history.
+- **Collector problem**: the NAS copy has been failing for over an hour, or the disk is almost full.
+- **Authentication failures**: 10 failed logins within 5 minutes on one device, recognised by the standard OpenSSH and Linux/BSD wording ("Failed password", "authentication failure", "Invalid user"). If a device's login is reachable from the internet, expect this to fire often; raise the threshold.
+
+**Custom rules** alert on lines containing your own text (or a regular expression), optionally only for some device folders and only after several matches in a time window. Use them for anything specific to your devices.
+
+Alerts never contain log text: log lines come from the devices, may hold secrets, and a notification can appear on a lock screen. A notification reads like "Logging stopped on firewall, 1 event(s) since 21:04. Check the logs." After an alert, repeats of the same rule on the same device are counted for the cooldown (30 minutes by default) and sent as one summary.
+
+Every alert is also recorded in `alerts/YYYY-MM-DD.jsonl` with the time, rule, device, count and the log files and line numbers that triggered it, kept 30 days here and optionally copied to a NAS folder of your choice. **Dry run** records alerts without sending them, to tune the rules. **Actions > Send Test Alert** sends a test notification, also in dry run. The **Alerts** health check shows the last alert, or why delivery fails; failed deliveries are retried with backoff and never hold up logging or the NAS copy.
+
+## Vaultwarden
+
+Instead of storing the NAS password or the ntfy token here, both can be read from your Vaultwarden. **Actions > Configure Vaultwarden** holds the connection, used by both: the URL you open Vaultwarden at, your account email and master password. If the URL uses a name ending in `.local`, also enter the IP address it stands for (StartOS services cannot look up `.local` names); if Vaultwarden's HTTPS certificate is signed by your own certificate authority, for example the root CA of the StartOS server it runs on, paste that CA certificate. Then choose **From Vaultwarden** in Configure NAS Copy or Configure Alerts and name the item. The **Vaultwarden** health check shows whether the vault unlocks and syncs.
+
+**Version limit:** the bundled rbw 1.15.0, the newest release, cannot sign in to Vaultwarden 1.36 or later, so this works with Vaultwarden up to 1.35.x only. That also rules out the current Vaultwarden package on StartOS. With a newer Vaultwarden, enter the secrets in their own actions.
 
 ## Limitations
 
@@ -91,7 +114,7 @@ While the copy is on, a file is only deleted from this server after it has been 
 - Logs of StartOS itself are not collected.
 - Files older than the retention period are deleted, checked once an hour. Use the NAS copy, or back up, to keep them longer.
 - The NAS copy speaks SMB only.
-- Reading the NAS login from Vaultwarden works with Vaultwarden up to 1.35.x (see above).
+- Reading secrets from Vaultwarden works with Vaultwarden up to 1.35.x (see above).
 
 ## Backups
 
@@ -99,4 +122,4 @@ A StartOS backup includes the settings, the saved passwords, and all log files t
 
 ## Where passwords are kept
 
-The NAS password ("Enter here") and the Vaultwarden master password are stored in one file on this server that only root can read. They are never shown again in a form, never written to the service logs, and never sent anywhere but to the NAS and to Vaultwarden. When the login comes from Vaultwarden, the NAS password itself is not stored at all: it is read from the vault before each copy.
+The NAS password and the ntfy token (when entered here) and the Vaultwarden master password are stored in one file on this server that only root can read. They are never shown again in a form, never written to the service logs, and never sent anywhere but to the NAS and to Vaultwarden. Secrets read from Vaultwarden are not stored at all: they are read from the vault each time they are needed.

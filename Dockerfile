@@ -63,5 +63,6 @@ RUN ARCH="$(dpkg --print-architecture)" && \
     && rbw --version
 
 COPY docker/collector.py /usr/local/bin/collector
+COPY docker/alerter.py /usr/local/bin/alerter.py
 COPY docker/pinentry-file.sh /usr/local/bin/pinentry-file
 RUN chmod 755 /usr/local/bin/collector /usr/local/bin/pinentry-file

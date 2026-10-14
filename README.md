@@ -16,8 +16,9 @@ the technical reference.
 | Image | `debian:trixie-slim` + Debian's `rsyslog` (version pinned and checked at build, see [UPDATING.md](UPDATING.md)), `tzdata`, `python3` with hash-pinned `smbprotocol`, and `rbw` |
 | Architectures | x86_64, aarch64 |
 | Volume | `main`, mounted at `/data` |
-| Daemons | `receiver` (`rsyslogd -n`), `housekeeping` (`collector housekeeping`, hourly), `pusher` (`collector push`, NAS copy; idle while off) |
-| Health checks | Receiver (port listening, and the external port StartOS assigned), Last Message, Rejected Senders, NAS Copy, Log Storage |
+| Daemons | `receiver` (`rsyslogd -n`), `housekeeping` (`collector housekeeping`), `pusher` (`collector push`, NAS copy; idle while off), `alerter` (`collector alerts`, `docker/alerter.py`; idle while off) |
+| Oneshot | `vault-prepare` (`collector vault-prepare`): fresh rbw agent at every start, new sign-in when the Vaultwarden account or address changed |
+| Health checks | Receiver (port listening, and the external port StartOS assigned), Vaultwarden (rbw unlock + sync), Alerts, Last Message, Rejected Senders, NAS Copy, Log Storage |
 | Dependencies | none |
 
 ## Interface
@@ -44,6 +45,9 @@ addresses the user enables. Syslog itself is unencrypted.
 | `/data/state/nas-push.json` | NAS copy state: last attempt, success and error, copied sizes |
 | `/data/state/rsyslog-stats.json` | impstats output (per-IP reject counters), emptied by collector.py every minute |
 | `/data/state/rejected.json` | Rejected senders: totals, last seen, most recent (30 days) |
+| `/data/alerts/<YYYY-MM-DD>.jsonl` | Alert records: time, rule, device, count, since, `lines` (file + line numbers), dryRun; 30 days |
+| `/data/state/alerter.json` | Alerter state: file offsets and line numbers, last seen per IP, volume history, cooldowns, delivery queue |
+| `/data/state/alerts-status.json` | For the Alerts health check |
 | `/data/rbw/` | rbw configuration, login and local (encrypted) vault copy |
 
 `<sender>` is the short hostname (up to the first dot, unless the hostname is
@@ -69,14 +73,14 @@ for `/etc/collector.json`, the settings of `docker/collector.py`.
   UTC). Saving restarts the service.
 - **Configure NAS Copy**: off by default and empty. Host, share, folder,
   interval (5 min to 24 h, default 1 h), NAS retention days (default 30),
-  login entered, or read from a Vaultwarden Login item with rbw at a URL
-  (optional IP for a `.local` name, written to the container's `/etc/hosts`;
-  optional custom CA, appended to the system bundle and passed as
-  `SSL_CERT_FILE`). rbw 1.15.0 cannot sign in to Vaultwarden 1.36 or later,
-  so this works with Vaultwarden up to 1.35.x; a Vaultwarden on the same
-  StartOS server (1.37+) is therefore not offered (it was in :1 and :2).
-  Passwords are never shown again; blank keeps the saved one. rbw's pinentry
-  and collector.py read them from `secrets.json`.
+  login entered, or a Vaultwarden Login item (username and password).
+  Passwords are never shown again; blank keeps the saved one.
+- **Configure Vaultwarden**: off by default and empty. URL, optional IP for a
+  `.local` name (written to the container's `/etc/hosts`), optional custom
+  CA (appended to the system bundle and passed as `SSL_CERT_FILE`), email,
+  master password (in `secrets.json`, read by rbw's pinentry). Shared by the
+  NAS copy and alerts. rbw 1.15.0 cannot sign in to Vaultwarden 1.36 or
+  later, so this works with Vaultwarden up to 1.35.x.
 - **Push Now**: copies at once (the pusher polls for `/data/state/push-now`
   every 10 s).
 
@@ -102,6 +106,29 @@ the NAS that are older than the NAS retention. A changed destination starts
 again from scratch. Errors are kept in the state file and shown by the NAS
 Copy check, which also fails when no copy succeeded for two intervals.
 
+## Alerts
+
+`alerter.py` follows the day files (byte offset and line count per file, so
+restarts resume and line numbers stay right; existing lines are skipped on the
+first start), parses `<time> <ip> <facility>.<severity> <host> <tag> <msg>`,
+and applies the rules from the `alerts` section of `/etc/collector.json`:
+`stopped`/`resumed` (single-address allow-list entries), `unknownSender`
+(increases in `rejected.json`), `severity` (≤ max), `volume` (10-minute
+buckets against the mean of the last 144, after 36), `collector` (NAS copy
+error with no success for an hour, < 5 % disk free), `authBurst` (OpenSSH/PAM
+phrases, N in M minutes per device) and custom rules (text or Python regex,
+optional device list, N in M minutes). One alert per rule and device, then a
+cooldown that rolls repeats into a count. Records go to `/data/alerts`;
+notifications (fixed text, never log text, device names sanitised) to
+`<ntfy url>/<topic>` with `Title`, `Priority`, `Tags` and an optional bearer
+token from `secrets.json` or a Vaultwarden item field (`rbw get --field`,
+default `api_key`, as in OpenClaw Extra Butter), optional IP for a `.local`
+ntfy host. Failed
+deliveries are retried with backoff (1 min doubling to 30 min, up to 20
+tries). `state/alert-test` (Send Test Alert) queues a test notification.
+A custom CA for ntfy joins the CA bundle given as `SSL_CERT_FILE`. The pusher
+copies alert records to `<share>/<alerts folder>` when one is set.
+
 ## Retention
 
 `housekeeping` deletes local `YYYY-MM-DD.log` files dated before today minus
@@ -115,8 +142,8 @@ The whole `main` volume.
 
 ## Not (yet) included
 
-TLS syslog, alerting, NAS protocols other than SMB, and collecting StartOS's
-own logs.
+TLS syslog, vendor-specific alert rules (use custom rules), NAS protocols
+other than SMB, and collecting StartOS's own logs.
 
 ## Building
 

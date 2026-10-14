@@ -26,7 +26,7 @@ export type RsyslogOptions = {
 
 // The sender folder, set in $.folder:
 // - full: the hostname the device sent
-// - short: the hostname up to its first dot (vp2430.internal -> vp2430),
+// - short: the hostname up to its first dot (fw1.home.arpa -> fw1),
 //   except when the "hostname" is an IP address, which is kept whole
 // - ip: the address the message came from
 const FOLDER_RULES: Record<FolderNaming, string> = {

@@ -3,6 +3,8 @@
 
     collector housekeeping   delete expired local files, once an hour
     collector push           copy the daily files to the NAS, on a schedule
+    collector alerts         watch new log lines and send alerts (alerter.py)
+    collector vault-prepare  fresh rbw agent at start; re-sign-in on changes
 
 Both run for as long as the service runs. Settings come from the JSON file
 main.ts writes into the container at every start (COLLECTOR_CONFIG). The
@@ -30,6 +32,9 @@ STATE_FILE = os.path.join(STATE_DIR, 'nas-push.json')
 PUSH_NOW = os.path.join(STATE_DIR, 'push-now')
 RSYSLOG_STATS = os.path.join(STATE_DIR, 'rsyslog-stats.json')
 REJECTED_FILE = os.path.join(STATE_DIR, 'rejected.json')
+ALERTS_DIR = os.environ.get('ALERTS_DIR', '/data/alerts')
+ALERT_FILE = re.compile(r'^\d{4}-\d{2}-\d{2}\.jsonl$')
+ALERT_RETENTION_DAYS = 30
 
 DAY_FILE = re.compile(r'^\d{4}-\d{2}-\d{2}\.log$')
 
@@ -116,6 +121,17 @@ def housekeeping_once(cfg):
         d = os.path.join(LOGS_DIR, sender)
         if os.path.isdir(d) and not os.listdir(d):
             os.rmdir(d)
+    # Alert records: kept 30 days here (and as long as the NAS keeps logs
+    # there); the same rule about the NAS copy applies.
+    alert_limit = cutoff(ALERT_RETENTION_DAYS)
+    alerts_to_nas = nas_on and bool((cfg.get('alerts') or {}).get('nasFolder'))
+    for name in sorted(os.listdir(ALERTS_DIR)) if os.path.isdir(ALERTS_DIR) else []:
+        path = os.path.join(ALERTS_DIR, name)
+        if not ALERT_FILE.match(name) or name[:10] >= alert_limit:
+            continue
+        if alerts_to_nas and files.get('@alerts/' + name) != os.path.getsize(path):
+            continue
+        os.remove(path)
     if removed:
         log(f'housekeeping: removed {removed} log file(s) dated before {limit}')
     if kept:
@@ -246,7 +262,7 @@ def secret(name):
         return ''
 
 
-def credentials(nas):
+def credentials(nas, vault):
     c = nas['credentials']
     if c['source'] == 'manual':
         password = secret('nasPassword')
@@ -254,15 +270,16 @@ def credentials(nas):
             raise PushError('no NAS password saved; enter it in Configure NAS Copy')
         return c['username'], password
     item = c['item']
-    if not c.get('baseUrl'):
-        raise PushError('no Vaultwarden URL set; enter it in Configure NAS Copy')
+    if not vault:
+        raise PushError(
+            'Vaultwarden is not set up; connect it in Configure Vaultwarden, '
+            'or enter the NAS login in Configure NAS Copy'
+        )
     code, _, err = rbw('unlock')
     if code != 0:
         raise PushError(
             f'Vaultwarden: could not sign in or unlock the vault: {first_line(err)}. '
-            'Check the URL, email and master password. rbw 1.15.0 works with '
-            'Vaultwarden up to 1.35.x; with 1.36 or later, enter the NAS login '
-            'in Configure NAS Copy instead'
+            'See the Vaultwarden health check'
         )
     code, _, err = rbw('sync')
     if code != 0:
@@ -283,12 +300,14 @@ def credentials(nas):
     return user, password
 
 
-def prepare_rbw(c):
-    """Start each run with a fresh rbw agent; sign out of Vaultwarden when
-    the account or the server address changed, so rbw signs in again."""
+def prepare_rbw(vault):
+    """Run once at every start, before anything reads the vault: a fresh rbw
+    agent, and a new sign-in when the Vaultwarden account or address changed."""
+    if not vault:
+        return
     rbw('stop-agent', timeout=20)
     marker = os.path.join(os.environ.get('HOME', '/data/rbw'), 'signed-in-as.json')
-    now = {'email': c.get('email'), 'baseUrl': c.get('baseUrl')}
+    now = {'email': vault.get('email'), 'baseUrl': vault.get('baseUrl')}
     try:
         with open(marker) as f:
             before = json.load(f)
@@ -296,7 +315,7 @@ def prepare_rbw(c):
         before = None
     if before != now:
         if before is not None:
-            log('push: Vaultwarden account or address changed, signing in again')
+            log('vault: Vaultwarden account or address changed, signing in again')
         rbw('purge', timeout=20)
         os.makedirs(os.path.dirname(marker), exist_ok=True)
         with open(marker, 'w') as f:
@@ -349,7 +368,7 @@ def push_once(cfg, state):
 
     nas = cfg['nas']
     host, share, folder = nas['host'], nas['share'], nas['folder']
-    user, password = credentials(nas)
+    user, password = credentials(nas, cfg.get('vault'))
     try:
         smbclient.register_session(
             host, username=user, password=password, connection_timeout=30
@@ -390,8 +409,31 @@ def push_once(cfg, state):
             smbclient.replace(part, dest)
             files[rel] = len(data)
             copied += 1
+        # Alert records, to their own folder in the same share.
+        alerts_folder = ((cfg.get('alerts') or {}).get('nasFolder') or '').strip('/')
+        alert_files = []
+        if alerts_folder and os.path.isdir(ALERTS_DIR):
+            alert_files = [n for n in sorted(os.listdir(ALERTS_DIR)) if ALERT_FILE.match(n)]
+        if alert_files:
+            remote_dir = unc(host, share, alerts_folder)
+            smbclient.makedirs(remote_dir, exist_ok=True)
+            for name in alert_files:
+                path = os.path.join(ALERTS_DIR, name)
+                size = os.path.getsize(path)
+                key = '@alerts/' + name
+                if files.get(key) == size:
+                    continue
+                with open(path, 'rb') as src:
+                    data = src.read(size)
+                part = remote_dir + '\\.' + name + '.part'
+                with smbclient.open_file(part, mode='wb') as dst:
+                    dst.write(data)
+                smbclient.replace(part, remote_dir + '\\' + name)
+                files[key] = len(data)
+                copied += 1
+
         # Forget files that no longer exist locally.
-        present = {rel for rel, _ in local}
+        present = {rel for rel, _ in local} | {'@alerts/' + n for n in alert_files}
         for rel in list(files):
             if rel not in present:
                 del files[rel]
@@ -411,6 +453,16 @@ def push_once(cfg, state):
             if here and not smbclient.listdir(sender_dir):
                 smbclient.rmdir(sender_dir)
             removed += here
+        if alerts_folder:
+            alerts_dir = unc(host, share, alerts_folder)
+            try:
+                names = [e.name for e in smbclient.scandir(alerts_dir)]
+            except OSError:
+                names = []
+            for name in names:
+                if ALERT_FILE.match(name) and name[:10] < limit:
+                    smbclient.remove(alerts_dir + '\\' + name)
+                    removed += 1
         return copied, removed
     except PushError:
         raise
@@ -430,8 +482,6 @@ def push(cfg):
         while True:
             time.sleep(86400)
     interval = int(nas['intervalMinutes']) * 60
-    if nas['credentials']['source'] != 'manual':
-        prepare_rbw(nas['credentials'])
     log(
         f'push: copying to //{nas["host"]}/{nas["share"]}/{nas["folder"]} '
         f'every {nas["intervalMinutes"]} min'
@@ -465,7 +515,9 @@ def push(cfg):
 
 
 def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in ('housekeeping', 'push', 'push-once'):
+    if len(sys.argv) != 2 or sys.argv[1] not in (
+        'housekeeping', 'push', 'push-once', 'alerts', 'vault-prepare'
+    ):
         print(__doc__, file=sys.stderr)
         sys.exit(2)
     cfg = load_config()
@@ -474,6 +526,15 @@ def main():
         housekeeping(cfg)
     elif cmd == 'push':
         push(cfg)
+    elif cmd == 'vault-prepare':
+        try:
+            prepare_rbw(cfg.get('vault'))
+        except Exception as e:  # never block the start; the check says why
+            log(f'vault: {e}')
+    elif cmd == 'alerts':
+        import alerter  # next to this file
+
+        alerter.run(cfg)
     else:  # one copy, for testing
         state = load_state()
         print(push_once(cfg, state))

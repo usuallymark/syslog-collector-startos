@@ -1,7 +1,9 @@
 import { mkdir } from 'node:fs/promises'
 import {
+  DEFAULT_ALERTS,
   DEFAULT_NAS,
   DEFAULT_SETTINGS,
+  DEFAULT_VAULTWARDEN,
   settingsJson,
 } from '../fileModels/settings.json'
 import { sdk } from '../sdk'
@@ -13,6 +15,11 @@ export const seedSettings = sdk.setupOnInit(async (effects) => {
   await mkdir(sdk.volumes.main.subpath('logs'), { recursive: true })
   const current = await settingsJson.read().once()
   if (current === null) {
-    await settingsJson.write(effects, { ...DEFAULT_SETTINGS, nas: DEFAULT_NAS })
+    await settingsJson.write(effects, {
+      ...DEFAULT_SETTINGS,
+      nas: DEFAULT_NAS,
+      vaultwarden: DEFAULT_VAULTWARDEN,
+      alerts: DEFAULT_ALERTS,
+    })
   }
 })

@@ -46,4 +46,8 @@ export const RBW_ENV = {
 export const RSYSLOG_STATS = '/data/state/rsyslog-stats.json'
 export const REJECTED_STATE = 'state/rejected.json'
 
+// Alerts: status written by alerter.py, and the file Send Test Alert creates.
+export const ALERTS_STATUS = 'state/alerts-status.json'
+export const ALERT_TEST = 'state/alert-test'
+
 export const INTERVAL_CHOICES = [5, 15, 30, 60, 180, 360, 720, 1440] as const
