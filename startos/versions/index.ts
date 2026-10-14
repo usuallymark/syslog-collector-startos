@@ -7,10 +7,12 @@ import { v8_2504_0_3 } from './v8_2504_0_3'
 import { v8_2504_0_4 } from './v8_2504_0_4'
 import { v8_2504_0_5 } from './v8_2504_0_5'
 import { v8_2504_0_6 } from './v8_2504_0_6'
+import { v8_2504_0_7 } from './v8_2504_0_7'
 
 export const versionGraph = VersionGraph.of({
   current,
   other: [
+    v8_2504_0_7,
     v8_2504_0_6,
     v8_2504_0_5,
     v8_2504_0_4,

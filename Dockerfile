@@ -6,7 +6,7 @@ FROM debian:trixie-slim
 ARG RSYSLOG_VERSION
 ARG RBW_VERSION=1.15.0
 
-# - rsyslog: the syslog receiver
+# - rsyslog: the syslog receiver; rsyslog-gnutls: its TLS driver
 # - tzdata: the time zone chosen in Configure Receiver names the daily files
 #   and stamps each line
 # - python3 (+ pip, build time only): collector.py, retention and NAS copy
@@ -14,6 +14,7 @@ ARG RBW_VERSION=1.15.0
 # - pinentry-curses: required by the rbw package (our own pinentry is used)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         rsyslog \
+        rsyslog-gnutls \
         tzdata \
         python3 \
         python3-pip \

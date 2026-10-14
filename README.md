@@ -13,12 +13,12 @@ the technical reference.
 | Item | Value |
 | --- | --- |
 | Package id | `syslog-collector` |
-| Image | `debian:trixie-slim` + Debian's `rsyslog` (version pinned and checked at build, see [UPDATING.md](UPDATING.md)), `tzdata`, `python3` with hash-pinned `smbprotocol`, and `rbw` |
+| Image | `debian:trixie-slim` + Debian's `rsyslog` (version pinned and checked at build, see [UPDATING.md](UPDATING.md)) and `rsyslog-gnutls`, `tzdata`, `python3` with hash-pinned `smbprotocol`, and `rbw` |
 | Architectures | x86_64, aarch64 |
 | Volume | `main`, mounted at `/data` |
 | Daemons | `receiver` (`rsyslogd -n`), `housekeeping` (`collector housekeeping`), `pusher` (`collector push`, NAS copy; idle while off), `alerter` (`collector alerts`, `docker/alerter.py`; idle while off) |
 | Oneshot | `vault-prepare` (`collector vault-prepare`): fresh rbw agent at every start, new sign-in when the Vaultwarden account or address changed |
-| Health checks | Receiver (port listening, and the external port StartOS assigned), Vaultwarden (rbw unlock + sync), Alerts, Last Message, Rejected Senders, NAS Copy, Log Storage |
+| Health checks | Receiver (port listening, and the external port StartOS assigned), TLS (certificate, port, names covered), Vaultwarden (rbw unlock + sync), Alerts, Last Message, Rejected Senders, NAS Copy, Log Storage |
 | Dependencies | none |
 
 ## Interface
@@ -26,14 +26,24 @@ the technical reference.
 | Id | Type | Internal port | External port | Protocols |
 | --- | --- | --- | --- | --- |
 | `syslog` | `api` | 5514 | chosen in Configure Receiver (default 5514, must be above 1024) | UDP and TCP |
+| `syslog-tls` | `api` | 6514 | chosen in Configure Receiver (default 6514); only while TLS is on | TLS over TCP (RFC 5425) |
 
 StartOS forwards every package port for both TCP and UDP. Packages may not
 claim external ports at or below 1024, so 514 is impossible. If the chosen
 port is already taken on the server, StartOS assigns a random port instead;
 the Receiver health check then fails and names the assigned port.
 
-The binding is `secure: { ssl: false }` so StartOS publishes it on the LAN
-addresses the user enables. Syslog itself is unencrypted.
+The plain binding is `secure: { ssl: false }` so StartOS publishes it on the
+LAN addresses the user enables. Syslog itself is unencrypted.
+
+The TLS binding is `secure: { ssl: true }` with `addSsl: null`: rsyslog
+(`gtls` driver, `authMode="anon"`) terminates TLS itself with a certificate
+from `sdk.getSslCertificate` / `getSslKey` (ECDSA, signed by the StartOS root
+CA, renewed by StartOS; the service restarts on renewal). It is requested for
+the server's `.local` name and its LAN IPv4 addresses, falling back to the
+`.local` name alone if StartOS refuses the addresses. StartOS terminating TLS
+(`addSsl`) is not used: rsyslog would then see StartOS, not the device, as the
+sender, which breaks the allow-list and the per-IP rules.
 
 ## Files
 

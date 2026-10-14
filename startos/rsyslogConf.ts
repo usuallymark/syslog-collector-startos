@@ -18,6 +18,9 @@ export type RsyslogOptions = {
   tcp: boolean
   folderNaming: FolderNaming
   logsDir: string
+  // TLS (RFC 5425) on its own port, with a certificate signed by the
+  // StartOS root CA; null when off.
+  tls: { port: number; certFile: string; keyFile: string } | null
   // Allow-list entries; empty accepts every sender.
   allowedSenders: string[]
   // Where impstats writes the per-IP reject counters every minute.
@@ -47,12 +50,23 @@ export function rsyslogConf(o: RsyslogOptions): string {
       `input(type="imudp" port="${o.port}" ruleset="remote")`,
     )
   }
+  if (o.tcp || o.tls) {
+    inputs.push('module(load="imtcp" maxSessions="500")')
+  }
   if (o.tcp) {
     // imtcp accepts both newline-terminated and octet-counted (RFC 6587)
     // framing on the same port.
+    inputs.push(`input(type="imtcp" port="${o.port}" ruleset="remote")`)
+  }
+  if (o.tls) {
+    // Encrypted; devices check the certificate against the StartOS root CA.
+    // Devices are not asked for certificates of their own (authMode anon):
+    // the allow-list still decides who may send.
     inputs.push(
-      'module(load="imtcp" maxSessions="500")',
-      `input(type="imtcp" port="${o.port}" ruleset="remote")`,
+      `input(type="imtcp" port="${o.tls.port}" ruleset="remote"
+  streamDriver.name="gtls" streamDriver.mode="1" streamDriver.authMode="anon"
+  streamDriver.CertFile="${o.tls.certFile}"
+  streamDriver.KeyFile="${o.tls.keyFile}")`,
     )
   }
 

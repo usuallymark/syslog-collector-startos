@@ -185,14 +185,18 @@ def save_json(path, value):
 
 def rejected_once(started_at):
     """Fold new reject counts into rejected.json (totals, last seen, and the
-    most recent rejected IP), and log each IP at most once an hour."""
+    most recent rejected IP), and log each IP at most once an hour.
+
+    started_at identifies the current rsyslog run, whose counters start at
+    zero. None folds counts left over from the previous run against that
+    run's counters."""
     counters = read_reject_counters()
     if counters is None:
         return
     state = load_json(REJECTED_FILE, {})
     ips = state.setdefault('ips', {})
     # Counters restart at zero when rsyslog restarts.
-    if state.get('since') != started_at:
+    if started_at is not None and state.get('since') != started_at:
         state['since'] = started_at
         for e in ips.values():
             e['counter'] = 0
@@ -224,6 +228,14 @@ def rejected_once(started_at):
 def housekeeping(cfg):
     started_at = now_iso()
     next_retention = 0.0
+    # The stats file can still hold the last counters of the rsyslog that ran
+    # before this start. Fold them against that run first: counted as new,
+    # they would show rejections that never happened again.
+    if cfg.get('allowList'):
+        try:
+            rejected_once(None)
+        except Exception as e:
+            log(f'allow-list: {e}')
     while True:
         if time.time() >= next_retention:
             try:

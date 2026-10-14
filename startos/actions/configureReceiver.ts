@@ -98,6 +98,25 @@ const inputSpec = InputSpec.of({
     ),
     default: DEFAULT_SETTINGS.tcp,
   }),
+  tls: Value.toggle({
+    name: i18n('Accept TLS'),
+    description: i18n(
+      'Encrypted syslog over TCP (RFC 5425) on its own port, so log lines cannot be read on the network. The certificate is issued by this StartOS server: each device must trust its root CA and connect using a name the certificate covers, shown in the TLS health check. Devices are not asked for certificates of their own; the allow-list still decides who may send.',
+    ),
+    default: DEFAULT_SETTINGS.tls,
+  }),
+  tlsPort: Value.number({
+    name: i18n('TLS Port'),
+    description: i18n(
+      'The port devices send encrypted syslog to. 6514 is the standard TLS syslog port.',
+    ),
+    required: true,
+    default: DEFAULT_SETTINGS.tlsPort,
+    min: MIN_EXTERNAL_PORT,
+    max: 65535,
+    integer: true,
+    step: 1,
+  }),
   folderNaming: Value.select({
     name: i18n('Name Folders By'),
     description: i18n(
@@ -189,7 +208,7 @@ export const configureReceiver = sdk.Action.withInput(
   async () => ({
     name: i18n('Configure Receiver'),
     description: i18n(
-      'Choose the port and protocols devices send to, which senders are accepted, how device folders are named, how long logs are kept on this server, and the time zone.',
+      'Choose the ports and protocols devices send to (UDP, TCP, encrypted TLS), which senders are accepted, how device folders are named, how long logs are kept on this server, and the time zone.',
     ),
     warning: null,
     allowedStatuses: 'any',
@@ -213,6 +232,8 @@ export const configureReceiver = sdk.Action.withInput(
       port: s.port,
       udp: s.udp,
       tcp: s.tcp,
+      tls: s.tls,
+      tlsPort: s.tlsPort,
       folderNaming: s.folderNaming,
       retentionDays: s.retentionDays,
       timezone,
@@ -225,8 +246,13 @@ export const configureReceiver = sdk.Action.withInput(
   },
 
   async ({ effects, input }) => {
-    if (!input.udp && !input.tcp) {
-      throw new Error(i18n('Turn on UDP, TCP or both.'))
+    if (!input.udp && !input.tcp && !input.tls) {
+      throw new Error(i18n('Turn on UDP, TCP or TLS.'))
+    }
+    if (input.tls && input.tlsPort === input.port) {
+      throw new Error(
+        i18n('The TLS port must differ from the port for UDP and TCP.'),
+      )
     }
     const tz = input.timezone as {
       selection: string
@@ -271,6 +297,8 @@ export const configureReceiver = sdk.Action.withInput(
       port: input.port,
       udp: input.udp,
       tcp: input.tcp,
+      tls: input.tls,
+      tlsPort: input.tlsPort,
       folderNaming: input.folderNaming,
       retentionDays: input.retentionDays,
       timezone,
@@ -281,7 +309,7 @@ export const configureReceiver = sdk.Action.withInput(
       version: '1' as const,
       title: i18n('Receiver Configured'),
       message: i18n(
-        'Saved. The service restarts with the new settings if it is running. The address and port to use are under Interfaces > Syslog.',
+        'Saved. The service restarts with the new settings if it is running. The addresses and ports to use are under Interfaces.',
       ),
       result: null,
     }

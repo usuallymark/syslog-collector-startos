@@ -33,6 +33,10 @@ import {
   RBW_ENV,
   RSYSLOG_CONF,
   SYSLOG_PORT,
+  SYSLOG_TLS_PORT,
+  TLS_CERT,
+  TLS_DIR,
+  TLS_KEY,
 } from './utils'
 
 const DAY_FILE = /^\d{4}-\d{2}-\d{2}\.log$/
@@ -214,6 +218,75 @@ function withHostsBlock(
   return [base, HOSTS_BEGIN, ...lines, HOSTS_END].join('\n') + '\n'
 }
 
+type Effects = Parameters<Parameters<typeof sdk.setupMain>[0]>[0]['effects']
+
+/**
+ * The names devices may use for the TLS port: this server's .local name and
+ * its LAN IPv4 addresses. Reactive, so a changed address renews the
+ * certificate.
+ */
+async function tlsNames(effects: Effects): Promise<string[]> {
+  const available =
+    (await sdk.host
+      .getOwn(
+        effects,
+        syslogHostId,
+        (h) =>
+          h?.bindings[SYSLOG_TLS_PORT]?.addresses.available.map((a) => ({
+            hostname: a.hostname,
+            kind: a.metadata.kind,
+            public: a.public,
+          })) ?? [],
+      )
+      .const()) ?? []
+  const names = available
+    .filter(
+      (a) =>
+        a.kind === 'mdns' ||
+        (a.kind === 'ipv4' &&
+          !a.public &&
+          !a.hostname.startsWith('127.') &&
+          !a.hostname.startsWith('10.0.3.')),
+    )
+    .map((a) => a.hostname)
+  return [...new Set(names)].sort(
+    (a, b) => Number(!a.endsWith('.local')) - Number(!b.endsWith('.local')),
+  )
+}
+
+type TlsCert = { chain: string[]; key: string; names: string[] }
+
+/**
+ * A certificate signed by the StartOS root CA for the given names, renewed by
+ * StartOS (the service restarts on renewal). If StartOS will not sign for the
+ * IP addresses, the .local name alone.
+ */
+async function tlsCertificate(
+  effects: Effects,
+  names: string[],
+): Promise<TlsCert> {
+  const local = names.filter((n) => n.endsWith('.local'))
+  const attempts = [names, local].filter(
+    (a, i, all) => a.length && (i === 0 || a.length !== all[0].length),
+  )
+  let lastError: unknown = new Error('no .local name or LAN address')
+  for (const hostnames of attempts) {
+    try {
+      const chain = await sdk
+        .getSslCertificate(effects, hostnames, 'ecdsa')
+        .const()
+      const key = await sdk.getSslKey(effects, {
+        hostnames,
+        algorithm: 'ecdsa',
+      })
+      return { chain, key, names: hostnames }
+    } catch (e) {
+      lastError = e
+    }
+  }
+  throw lastError
+}
+
 export const main = sdk.setupMain(async ({ effects }) => {
   console.info(i18n('Starting Log Collector'))
 
@@ -239,6 +312,19 @@ export const main = sdk.setupMain(async ({ effects }) => {
     .filter(Boolean)
     .join(' + ')
 
+  // TLS: a certificate from StartOS, or why there is none.
+  let tls: TlsCert | null = null
+  let tlsError: string | null = null
+  if (settings.tls) {
+    const names = await tlsNames(effects)
+    try {
+      tls = await tlsCertificate(effects, names)
+    } catch (e) {
+      tlsError = String((e as Error)?.message ?? e)
+      console.error(`TLS certificate: ${tlsError}`)
+    }
+  }
+
   const sub = await sdk.SubContainer.of(
     effects,
     { imageId: 'rsyslog' },
@@ -252,6 +338,13 @@ export const main = sdk.setupMain(async ({ effects }) => {
   )
   const rootfs = await sub.rootfs
 
+  if (tls) {
+    await mkdir(`${rootfs}${TLS_DIR}`, { recursive: true, mode: 0o700 })
+    const pem = (p: string) => p.trim() + '\n'
+    await writeFile(`${rootfs}${TLS_CERT}`, tls.chain.map(pem).join(''))
+    await writeFile(`${rootfs}${TLS_KEY}`, pem(tls.key), { mode: 0o600 })
+  }
+
   await writeFile(
     `${rootfs}${RSYSLOG_CONF}`,
     rsyslogConf({
@@ -260,6 +353,13 @@ export const main = sdk.setupMain(async ({ effects }) => {
       tcp: settings.tcp,
       folderNaming: settings.folderNaming,
       logsDir: LOGS_DIR,
+      tls: tls
+        ? {
+            port: SYSLOG_TLS_PORT,
+            certFile: TLS_CERT,
+            keyFile: TLS_KEY,
+          }
+        : null,
       allowedSenders: allowed,
       statsFile: RSYSLOG_STATS,
     }),
@@ -358,6 +458,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
           folderNaming: settings.folderNaming,
           timezone: settings.timezone,
           allowed,
+          tls: tls ? { port: settings.tlsPort, names: tls.names } : null,
         },
         exec: {
           command: ['rsyslogd', '-n', '-iNONE', '-f', RSYSLOG_CONF],
@@ -366,6 +467,13 @@ export const main = sdk.setupMain(async ({ effects }) => {
         ready: {
           display: i18n('Receiver'),
           fn: async () => {
+            // TLS only: the TLS check below reports the port.
+            if (!settings.udp && !settings.tcp) {
+              return {
+                result: 'success',
+                message: i18n('UDP and TCP are off: TLS only'),
+              }
+            }
             const listening = await sdk.healthCheck.checkPortListening(
               effects,
               SYSLOG_PORT,
@@ -570,6 +678,71 @@ export const main = sdk.setupMain(async ({ effects }) => {
                 age: age(Date.now() - newest.at),
                 sender: newest.sender,
               }),
+            }
+          },
+        },
+        requires: ['receiver'],
+      })
+      .addHealthCheck('tls', {
+        ready: {
+          display: i18n('TLS'),
+          trigger: sdk.trigger.statusTrigger(60_000, { starting: 5_000 }),
+          fn: async () => {
+            if (!settings.tls) {
+              return {
+                result: 'disabled',
+                message: i18n('Off. Turn it on in Configure Receiver.'),
+              }
+            }
+            if (!tls) {
+              return {
+                result: 'failure',
+                message: i18n(
+                  'StartOS did not provide a certificate: ${error}',
+                  { error: tlsError ?? '' },
+                ),
+              }
+            }
+            const listening = await sdk.healthCheck.checkPortListening(
+              effects,
+              SYSLOG_TLS_PORT,
+              {
+                successMessage: '',
+                errorMessage: i18n('rsyslog is not listening for TLS yet'),
+              },
+            )
+            if (listening.result !== 'success') return listening
+            const external = await sdk.host
+              .getOwn(
+                effects,
+                syslogHostId,
+                (h) =>
+                  h?.bindings[SYSLOG_TLS_PORT]?.net.assignedSslPort ??
+                  h?.bindings[SYSLOG_TLS_PORT]?.net.assignedPort ??
+                  null,
+              )
+              .once()
+            if (external !== null && external !== settings.tlsPort) {
+              return {
+                result: 'failure',
+                message: i18n(
+                  'Port ${chosen} is already used on this server, so StartOS assigned port ${assigned}. Choose another port in Configure Receiver, or point your devices at ${assigned}.',
+                  {
+                    chosen: String(settings.tlsPort),
+                    assigned: String(external),
+                  },
+                ),
+              }
+            }
+            return {
+              result: 'success',
+              message: i18n(
+                'Encrypted on port ${port}. Devices connect to ${names} and must trust the root CA of this server.',
+                {
+                  port: String(external ?? settings.tlsPort),
+                  names: tls.names.join(', '),
+                },
+              ),
             }
           },
         },

@@ -1,90 +1,31 @@
 import { VersionInfo } from '@start9labs/start-sdk'
-import { sdk } from '../sdk'
-import { singleAddress } from '../senders'
-
-type Raw = {
-  allowedSenders?: Record<string, unknown>[]
-  alerts?: { rules?: { stopped?: Record<string, unknown> } }
-  [k: string]: unknown
-}
-
-async function readRaw(): Promise<Raw | null> {
-  try {
-    return JSON.parse(
-      String(await sdk.volumes.main.readFile('settings.json', 'utf8')),
-    ) as Raw
-  } catch {
-    return null
-  }
-}
-
-async function writeRaw(raw: Raw) {
-  await sdk.volumes.main.writeFile(
-    'settings.json',
-    JSON.stringify(raw, null, 2),
-  )
-}
-
-// Up to 8.2504.0:6, "Logging stopped" had one limit for every single address
-// on the allow-list. Each sender now has its own, blank for devices that
-// only log when something happens. Existing single addresses keep the old
-// limit, so nothing changes until the user clears it.
-async function silenceLimitPerSender() {
-  const raw = await readRaw()
-  if (!raw) return
-  const stopped = raw.alerts?.rules?.stopped
-  const old = Number(stopped?.minutes)
-  const minutes = Number.isInteger(old) && old >= 1 ? old : 15
-  for (const s of raw.allowedSenders ?? []) {
-    s.silentMinutes = singleAddress(String(s.address ?? '')) ? minutes : null
-  }
-  if (stopped) delete stopped.minutes
-  await writeRaw(raw)
-}
-
-async function silenceLimitShared() {
-  const raw = await readRaw()
-  if (!raw) return
-  const limits = (raw.allowedSenders ?? [])
-    .map((s) => Number(s.silentMinutes))
-    .filter((n) => Number.isInteger(n) && n >= 1)
-  for (const s of raw.allowedSenders ?? []) delete s.silentMinutes
-  const stopped = raw.alerts?.rules?.stopped
-  if (stopped) stopped.minutes = limits.length ? Math.min(...limits) : 15
-  await writeRaw(raw)
-}
 
 export const current = VersionInfo.of({
-  version: '8.2504.0:7',
+  version: '8.2504.0:8',
   releaseNotes: {
-    en_US: `"Logging stopped" is now set per device.
+    en_US: `Encrypted syslog (TLS), and a fix for phantom rejections.
 
-- Each entry in **Configure Receiver > Allowed Senders** has its own **Alert If Silent For** limit. Leave it blank for devices that only log when something happens, such as many NAS systems, so they no longer raise false alerts.
-- Existing single addresses keep the limit they had (15 minutes by default): clear it on the devices that should not be watched.
-- **Configure Alerts** shows, under the rule's switch and after saving, which devices are watched and where to change that.`,
-    es_ES: `"Registro detenido" se ajusta ahora por dispositivo.
+- **TLS** (RFC 5425): turn on **Accept TLS** in Configure Receiver to receive encrypted syslog on its own port (6514 by default), next to plain UDP and TCP. The certificate is issued and renewed by your StartOS server; devices trust its root CA and connect using a name shown in the new **TLS** health check. Off by default.
+- **Fix:** the last reject counters of the previous run were counted again when the service started, so **Rejected Senders** (and the "Unknown sender" alert) showed a new rejection from an address that had sent nothing. Counts already recorded are kept and age out after 30 days.`,
+    es_ES: `Syslog cifrado (TLS) y una corrección de rechazos fantasma.
 
-- Cada entrada de **Configurar receptor > Remitentes permitidos** tiene su propio límite **Alertar si no envía durante**. Déjalo en blanco para dispositivos que solo registran cuando ocurre algo, como muchos NAS, para que ya no generen falsas alertas.
-- Las direcciones individuales existentes conservan el límite que tenían (15 minutos por defecto): bórralo en los dispositivos que no deban vigilarse.
-- **Configurar alertas** muestra, bajo el interruptor de la regla y al guardar, qué dispositivos se vigilan y dónde cambiarlo.`,
-    de_DE: `„Protokollierung gestoppt“ wird jetzt pro Gerät eingestellt.
+- **TLS** (RFC 5425): activa **Aceptar TLS** en Configurar receptor para recibir syslog cifrado en su propio puerto (6514 por defecto), junto a UDP y TCP sin cifrar. El certificado lo emite y renueva tu servidor StartOS; los dispositivos confían en su CA raíz y se conectan con un nombre que muestra la nueva comprobación **TLS**. Desactivado por defecto.
+- **Corrección:** los últimos contadores de rechazos de la ejecución anterior se volvían a contar al iniciar el servicio, así que **Remitentes rechazados** (y la alerta "Remitente desconocido") mostraban un rechazo nuevo de una dirección que no había enviado nada. Los recuentos ya registrados se conservan y caducan a los 30 días.`,
+    de_DE: `Verschlüsseltes Syslog (TLS) und eine Korrektur für Phantom-Ablehnungen.
 
-- Jeder Eintrag unter **Empfänger konfigurieren > Erlaubte Absender** hat ein eigenes Limit **Warnen, wenn still seit**. Lassen Sie es leer für Geräte, die nur bei Ereignissen protokollieren, etwa viele NAS-Systeme; sie lösen dann keine falschen Warnungen mehr aus.
-- Bestehende Einzeladressen behalten ihr bisheriges Limit (standardmäßig 15 Minuten): leeren Sie es bei Geräten, die nicht überwacht werden sollen.
-- **Warnungen konfigurieren** zeigt unter dem Schalter der Regel und nach dem Speichern, welche Geräte überwacht werden und wo man das ändert.`,
-    pl_PL: `„Logowanie ustało” ustawia się teraz dla każdego urządzenia.
+- **TLS** (RFC 5425): Schalten Sie **TLS annehmen** unter Empfänger konfigurieren ein, um verschlüsseltes Syslog auf einem eigenen Port (standardmäßig 6514) zu empfangen, neben unverschlüsseltem UDP und TCP. Das Zertifikat stellt Ihr StartOS-Server aus und erneuert es; Geräte vertrauen seiner Root-CA und verbinden sich mit einem Namen, den die neue Prüfung **TLS** anzeigt. Standardmäßig aus.
+- **Korrektur:** Die letzten Ablehnungszähler des vorherigen Laufs wurden beim Start des Dienstes erneut gezählt, sodass **Abgelehnte Absender** (und die Warnung „Unbekannter Absender“) eine neue Ablehnung einer Adresse zeigten, die nichts gesendet hatte. Bereits erfasste Zählungen bleiben erhalten und verfallen nach 30 Tagen.`,
+    pl_PL: `Szyfrowany syslog (TLS) i poprawka fantomowych odrzuceń.
 
-- Każdy wpis w **Skonfiguruj odbiornik > Dozwoleni nadawcy** ma własny limit **Alarm po ciszy trwającej**. Zostaw go pustym dla urządzeń, które logują tylko wtedy, gdy coś się dzieje, jak wiele serwerów NAS, aby nie wywoływały już fałszywych alertów.
-- Istniejące pojedyncze adresy zachowują dotychczasowy limit (domyślnie 15 minut): wyczyść go dla urządzeń, które nie mają być obserwowane.
-- **Skonfiguruj alerty** pokazuje pod przełącznikiem reguły i po zapisaniu, które urządzenia są obserwowane i gdzie to zmienić.`,
-    fr_FR: `« Journalisation arrêtée » se règle désormais par appareil.
+- **TLS** (RFC 5425): włącz **Przyjmuj TLS** w Skonfiguruj odbiornik, aby odbierać szyfrowany syslog na osobnym porcie (domyślnie 6514), obok nieszyfrowanego UDP i TCP. Certyfikat wystawia i odnawia Twój serwer StartOS; urządzenia ufają jego głównemu CA i łączą się, używając nazwy pokazanej w nowej kontroli **TLS**. Domyślnie wyłączone.
+- **Poprawka:** ostatnie liczniki odrzuceń z poprzedniego uruchomienia były liczone ponownie przy starcie usługi, więc **Odrzuceni nadawcy** (i alert „Nieznany nadawca”) pokazywały nowe odrzucenie z adresu, który nic nie wysłał. Już zapisane liczby są zachowane i wygasają po 30 dniach.`,
+    fr_FR: `Syslog chiffré (TLS) et correction des rejets fantômes.
 
-- Chaque entrée de **Configurer le récepteur > Expéditeurs autorisés** a sa propre limite **Alerter après un silence de**. Laissez-la vide pour les appareils qui ne journalisent que lorsqu'il se passe quelque chose, comme beaucoup de NAS : ils ne déclenchent plus de fausses alertes.
-- Les adresses individuelles existantes gardent leur limite (15 minutes par défaut) : effacez-la pour les appareils à ne pas surveiller.
-- **Configurer les alertes** indique, sous l'interrupteur de la règle et après l'enregistrement, quels appareils sont surveillés et où le modifier.`,
+- **TLS** (RFC 5425) : activez **Accepter TLS** dans Configurer le récepteur pour recevoir du syslog chiffré sur son propre port (6514 par défaut), à côté de l'UDP et du TCP non chiffrés. Le certificat est émis et renouvelé par votre serveur StartOS ; les appareils font confiance à son autorité racine et se connectent avec un nom affiché par la nouvelle vérification **TLS**. Désactivé par défaut.
+- **Correctif :** les derniers compteurs de rejets de l'exécution précédente étaient recomptés au démarrage du service : **Expéditeurs rejetés** (et l'alerte « Expéditeur inconnu ») affichaient un nouveau rejet d'une adresse qui n'avait rien envoyé. Les décomptes déjà enregistrés sont conservés et expirent après 30 jours.`,
   },
   migrations: {
-    up: silenceLimitPerSender,
-    down: silenceLimitShared,
+    up: async () => {},
+    down: async () => {},
   },
 })

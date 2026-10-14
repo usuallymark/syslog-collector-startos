@@ -11,6 +11,13 @@ export const RSYSLOG_VERSION = '8.2504.0'
 // forwards to it, chosen in Configure Receiver.
 export const SYSLOG_PORT = 5514
 
+// The port rsyslog accepts TLS syslog on inside the container (TCP only),
+// and where the certificate StartOS signs for it is written at every start.
+export const SYSLOG_TLS_PORT = 6514
+export const TLS_DIR = '/etc/rsyslog-tls'
+export const TLS_CERT = `${TLS_DIR}/fullchain.pem`
+export const TLS_KEY = `${TLS_DIR}/key.pem`
+
 // Ports at or below 1024 are reserved for StartOS itself, so a package cannot
 // use the standard syslog port 514.
 export const MIN_EXTERNAL_PORT = 1025

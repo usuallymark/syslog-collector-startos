@@ -31,7 +31,7 @@ Folders are named after each device's short hostname (`firewall`) by default. Co
 2. On each device, set that address and port as a remote syslog server. Examples are below.
 3. Check the **Last Message** health check on the dashboard. Within a minute of a device sending something, it shows the device's folder name.
 4. Add your sending devices under **Configure Receiver > Allowed Senders** (the task on the service page takes you there). Until you do, the Rejected Senders check warns that every sender is accepted.
-5. Optionally, in **Actions > Configure Receiver**, change the port, turn UDP or TCP off, change how folders are named, change how many days are kept on this server (3 by default), or pick your time zone (UTC by default; choose a region, then a city). The time zone decides when each daily file starts.
+5. Optionally, in **Actions > Configure Receiver**, change the port, turn UDP or TCP off, turn on encrypted TLS (below), change how folders are named, change how many days are kept on this server (3 by default), or pick your time zone (UTC by default; choose a region, then a city). The time zone decides when each daily file starts.
 6. Optionally, set up the copy to a NAS and alerts (below).
 
 ### Example: OPNsense
@@ -56,6 +56,26 @@ Open **Log Center > Log Sending**:
 - **Transfer protocol**: UDP or TCP
 - **Log format**: BSD (RFC 3164) or IETF (RFC 5424); both work
 - Leave **Enable secure connection (SSL/TLS)** off
+
+## Encrypted syslog (TLS)
+
+Plain syslog crosses your network as readable text. With **Accept TLS** on in **Configure Receiver**, Log Collector also listens for encrypted syslog (RFC 5425) on its own port, **6514** by default, shown under **Interfaces > Syslog (TLS)**. Plain UDP and TCP can stay on while you move devices over, and be turned off afterwards.
+
+The certificate comes from your StartOS server and is renewed by it. Each device needs two things:
+
+1. **Trust the root CA of your StartOS server.** Download it from StartOS (the root CA you also install on computers to open StartOS over HTTPS) and import it on the device as a trusted certificate authority.
+2. **Connect using a name the certificate covers.** The **TLS** health check lists them, for example `adjective-noun.local`. If it lists only the `.local` name, the device must be able to look that name up: many firewalls and NAS systems cannot resolve `.local` names by themselves, so add a host override in your DNS (for example in OPNsense: Services > Unbound DNS > Overrides) mapping that name to the server's IP address.
+
+Devices are not asked for certificates of their own; the allow-list still decides who may send.
+
+### Example: OPNsense
+
+1. **System > Trust > Authorities**, **+**: method **Import an existing Certificate Authority**, paste the StartOS root CA, save.
+2. **System > Settings > Logging > Remote**, edit the destination: **Transport** **TLS(4)**, **Hostname** a name from the TLS health check, **Port** 6514 (or the TLS port you chose). Save, then **Apply**.
+
+### Example: Synology DSM
+
+In **Log Center > Log Sending**: **Server** a name from the TLS health check, **Port** 6514, **Transfer protocol** TCP, tick **Enable secure connection (SSL/TLS)**, and import the StartOS root CA as the certificate DSM should trust.
 
 ## Limiting who can send
 
@@ -109,7 +129,7 @@ Instead of storing the NAS password or the ntfy token here, both can be read fro
 ## Limitations
 
 - **No port 514.** StartOS keeps ports below 1025 for itself, so devices must be able to send to a custom port. Most firewalls, NAS systems and servers can; a few simple home routers cannot.
-- **No encryption (TLS) yet.** Messages travel across your network in plain text, like standard syslog. Do not expose the Syslog interface to the internet.
+- **Encryption is optional.** Plain UDP and TCP travel across your network as readable text; use TLS (above) where that matters. Do not expose either interface to the internet.
 - **Sender filtering is by address only.** Without an allow-list, any device that can reach the port can write logs; with one, a forged UDP source address can still get through. Prefer TCP.
 - Logs of StartOS itself are not collected.
 - Files older than the retention period are deleted, checked once an hour. Use the NAS copy, or back up, to keep them longer.

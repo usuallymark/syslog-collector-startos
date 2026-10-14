@@ -28,6 +28,10 @@ export const DEFAULT_SETTINGS = {
   port: 5514,
   udp: true,
   tcp: true,
+  // TLS (RFC 5425) on its own port: off until devices trust the StartOS
+  // root CA.
+  tls: false,
+  tlsPort: 6514,
   folderNaming: 'short' as FolderNaming,
   retentionDays: 3,
   timezone: 'UTC',
@@ -200,6 +204,13 @@ const shape = z.looseObject({
   port: z.number().int().min(1025).max(65535).catch(DEFAULT_SETTINGS.port),
   udp: z.boolean().catch(DEFAULT_SETTINGS.udp),
   tcp: z.boolean().catch(DEFAULT_SETTINGS.tcp),
+  tls: z.boolean().catch(DEFAULT_SETTINGS.tls),
+  tlsPort: z
+    .number()
+    .int()
+    .min(1025)
+    .max(65535)
+    .catch(DEFAULT_SETTINGS.tlsPort),
   folderNaming: z.enum(FOLDER_NAMINGS).catch(DEFAULT_SETTINGS.folderNaming),
   retentionDays: z
     .number()
