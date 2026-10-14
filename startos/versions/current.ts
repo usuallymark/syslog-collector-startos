@@ -1,9 +1,10 @@
 import { VersionInfo } from '@start9labs/start-sdk'
 import { sdk } from '../sdk'
+import { singleAddress } from '../senders'
 
 type Raw = {
-  nas?: Record<string, unknown>
-  vaultwarden?: Record<string, unknown>
+  allowedSenders?: Record<string, unknown>[]
+  alerts?: { rules?: { stopped?: Record<string, unknown> } }
   [k: string]: unknown
 }
 
@@ -24,93 +25,66 @@ async function writeRaw(raw: Raw) {
   )
 }
 
-// Up to 8.2504.0:5 the Vaultwarden connection lived in the NAS settings,
-// with the login source "vaultwarden-url". It is now its own section,
-// shared by the NAS copy and alerts.
-async function vaultwardenOutOfNas() {
+// Up to 8.2504.0:6, "Logging stopped" had one limit for every single address
+// on the allow-list. Each sender now has its own, blank for devices that
+// only log when something happens. Existing single addresses keep the old
+// limit, so nothing changes until the user clears it.
+async function silenceLimitPerSender() {
   const raw = await readRaw()
-  if (!raw?.nas) return
-  const n = raw.nas
-  const used = n.credentialSource === 'vaultwarden-url'
-  if (!raw.vaultwarden && (used || n.vaultUrl)) {
-    raw.vaultwarden = {
-      enabled: used,
-      url: n.vaultUrl ?? '',
-      ip: n.vaultIp ?? '',
-      ca: n.vaultCa ?? '',
-      email: n.vaultEmail ?? '',
-    }
+  if (!raw) return
+  const stopped = raw.alerts?.rules?.stopped
+  const old = Number(stopped?.minutes)
+  const minutes = Number.isInteger(old) && old >= 1 ? old : 15
+  for (const s of raw.allowedSenders ?? []) {
+    s.silentMinutes = singleAddress(String(s.address ?? '')) ? minutes : null
   }
-  if (used) n.credentialSource = 'vaultwarden'
-  delete n.vaultUrl
-  delete n.vaultIp
-  delete n.vaultCa
-  delete n.vaultEmail
+  if (stopped) delete stopped.minutes
   await writeRaw(raw)
 }
 
-async function vaultwardenIntoNas() {
+async function silenceLimitShared() {
   const raw = await readRaw()
-  if (!raw?.nas) return
-  const v = raw.vaultwarden ?? {}
-  const n = raw.nas
-  n.vaultUrl = v.url ?? ''
-  n.vaultIp = v.ip ?? ''
-  n.vaultCa = v.ca ?? ''
-  n.vaultEmail = v.email ?? ''
-  if (n.credentialSource === 'vaultwarden')
-    n.credentialSource = 'vaultwarden-url'
-  delete raw.vaultwarden
+  if (!raw) return
+  const limits = (raw.allowedSenders ?? [])
+    .map((s) => Number(s.silentMinutes))
+    .filter((n) => Number.isInteger(n) && n >= 1)
+  for (const s of raw.allowedSenders ?? []) delete s.silentMinutes
+  const stopped = raw.alerts?.rules?.stopped
+  if (stopped) stopped.minutes = limits.length ? Math.min(...limits) : 15
   await writeRaw(raw)
 }
 
 export const current = VersionInfo.of({
-  version: '8.2504.0:6',
+  version: '8.2504.0:7',
   releaseNotes: {
-    en_US: `Real-time alerts through ntfy (off until you set them up).
+    en_US: `"Logging stopped" is now set per device.
 
-- **Configure Alerts**: ntfy server, topic and optional access token (entered, or read from Vaultwarden), dry run, cooldown, and an optional NAS folder for the alert records.
-- **Configure Vaultwarden** is now its own action, shared by the NAS copy and alerts, with a **Vaultwarden** health check (unlock and sync). The NAS copy's existing Vaultwarden details move there by themselves; the NAS form now only asks for the item name.
-- **Built-in rules, none tied to a device brand**: logging stopped (and resumed) on an allowed sender, unknown sender, high-severity syslog message, volume spike, collector problem (NAS copy failing, disk almost full), and bursts of failed logins (OpenSSH/PAM wording). Each can be switched off and tuned.
-- **Custom rules**: alert on lines containing your own text, optionally per device and after several matches.
-- Notifications never contain log text, only the rule, the device and a count. Each alert is recorded with the files and line numbers that triggered it, in alerts/YYYY-MM-DD.jsonl.
-- **Send Test Alert** action and an **Alerts** health check.`,
-    es_ES: `Alertas en tiempo real mediante ntfy (desactivadas hasta que las configures).
+- Each entry in **Configure Receiver > Allowed Senders** has its own **Alert If Silent For** limit. Leave it blank for devices that only log when something happens, such as many NAS systems, so they no longer raise false alerts.
+- Existing single addresses keep the limit they had (15 minutes by default): clear it on the devices that should not be watched.
+- **Configure Alerts** shows, under the rule's switch and after saving, which devices are watched and where to change that.`,
+    es_ES: `"Registro detenido" se ajusta ahora por dispositivo.
 
-- **Configurar alertas**: servidor ntfy, tema y token de acceso opcional (introducido o leído de Vaultwarden), simulación, pausa y una carpeta opcional del NAS para los registros de alertas.
-- **Configurar Vaultwarden** es ahora una acción propia, compartida por la copia al NAS y las alertas, con una comprobación **Vaultwarden** (desbloqueo y sincronización). Los datos de Vaultwarden de la copia al NAS se trasladan solos; el formulario del NAS solo pide el nombre del elemento.
-- **Reglas incluidas, ninguna ligada a una marca de dispositivo**: registro detenido (y reanudado) en un remitente permitido, remitente desconocido, mensaje syslog de gravedad alta, pico de volumen, problema del colector (copia al NAS fallando, disco casi lleno) y ráfagas de inicios de sesión fallidos (texto de OpenSSH/PAM). Cada una se puede desactivar y ajustar.
-- **Reglas propias**: alertar sobre líneas que contienen tu propio texto, opcionalmente por dispositivo y tras varias coincidencias.
-- Las notificaciones nunca contienen texto de los registros, solo la regla, el dispositivo y un recuento. Cada alerta se registra con los archivos y números de línea que la activaron, en alerts/AAAA-MM-DD.jsonl.
-- Acción **Enviar alerta de prueba** y comprobación **Alertas**.`,
-    de_DE: `Echtzeit-Warnungen über ntfy (aus, bis Sie sie einrichten).
+- Cada entrada de **Configurar receptor > Remitentes permitidos** tiene su propio límite **Alertar si no envía durante**. Déjalo en blanco para dispositivos que solo registran cuando ocurre algo, como muchos NAS, para que ya no generen falsas alertas.
+- Las direcciones individuales existentes conservan el límite que tenían (15 minutos por defecto): bórralo en los dispositivos que no deban vigilarse.
+- **Configurar alertas** muestra, bajo el interruptor de la regla y al guardar, qué dispositivos se vigilan y dónde cambiarlo.`,
+    de_DE: `„Protokollierung gestoppt“ wird jetzt pro Gerät eingestellt.
 
-- **Warnungen konfigurieren**: ntfy-Server, Topic und optionales Zugriffstoken (eingegeben oder aus Vaultwarden gelesen), Probelauf, Ruhezeit und ein optionaler NAS-Ordner für die Warnungsprotokolle.
-- **Vaultwarden konfigurieren** ist jetzt eine eigene Aktion, die NAS-Kopie und Warnungen gemeinsam nutzen, mit einer Prüfung **Vaultwarden** (Entsperren und Synchronisieren). Die bisherigen Vaultwarden-Angaben der NAS-Kopie werden automatisch übernommen; das NAS-Formular fragt nur noch nach dem Eintrag.
-- **Eingebaute Regeln, keine an eine Gerätemarke gebunden**: Protokollierung gestoppt (und wieder aufgenommen) bei einem erlaubten Absender, unbekannter Absender, Syslog-Meldung hoher Schwere, Mengenspitze, Problem des Collectors (NAS-Kopie schlägt fehl, Datenträger fast voll) und gehäufte Anmeldefehler (OpenSSH/PAM-Wortlaut). Jede kann ausgeschaltet und angepasst werden.
-- **Eigene Regeln**: warnen bei Zeilen mit Ihrem eigenen Text, optional pro Gerät und nach mehreren Treffern.
-- Benachrichtigungen enthalten nie Logtext, nur Regel, Gerät und Anzahl. Jede Warnung wird mit den auslösenden Dateien und Zeilennummern in alerts/JJJJ-MM-TT.jsonl aufgezeichnet.
-- Aktion **Testwarnung senden** und Prüfung **Warnungen**.`,
-    pl_PL: `Alerty w czasie rzeczywistym przez ntfy (wyłączone, dopóki ich nie skonfigurujesz).
+- Jeder Eintrag unter **Empfänger konfigurieren > Erlaubte Absender** hat ein eigenes Limit **Warnen, wenn still seit**. Lassen Sie es leer für Geräte, die nur bei Ereignissen protokollieren, etwa viele NAS-Systeme; sie lösen dann keine falschen Warnungen mehr aus.
+- Bestehende Einzeladressen behalten ihr bisheriges Limit (standardmäßig 15 Minuten): leeren Sie es bei Geräten, die nicht überwacht werden sollen.
+- **Warnungen konfigurieren** zeigt unter dem Schalter der Regel und nach dem Speichern, welche Geräte überwacht werden und wo man das ändert.`,
+    pl_PL: `„Logowanie ustało” ustawia się teraz dla każdego urządzenia.
 
-- **Skonfiguruj alerty**: serwer ntfy, temat i opcjonalny token dostępu (wpisany lub odczytany z Vaultwarden), tryb próby, wyciszenie i opcjonalny folder NAS na zapisy alertów.
-- **Skonfiguruj Vaultwarden** to teraz osobna akcja, wspólna dla kopii na NAS i alertów, z kontrolą **Vaultwarden** (odblokowanie i synchronizacja). Dotychczasowe dane Vaultwarden z kopii na NAS są przenoszone automatycznie; formularz NAS pyta już tylko o nazwę elementu.
-- **Reguły wbudowane, żadna nie jest związana z marką urządzenia**: logowanie ustało (i wznowione) u dozwolonego nadawcy, nieznany nadawca, wiadomość syslog o wysokiej ważności, skok liczby wiadomości, problem kolektora (kopia na NAS nie działa, dysk prawie pełny) i serie nieudanych logowań (komunikaty OpenSSH/PAM). Każdą można wyłączyć i dostroić.
-- **Własne reguły**: alarm przy liniach zawierających Twój tekst, opcjonalnie dla wybranych urządzeń i po kilku dopasowaniach.
-- Powiadomienia nigdy nie zawierają tekstu logów, tylko regułę, urządzenie i liczbę. Każdy alert jest zapisywany z plikami i numerami linii, które go wywołały, w alerts/RRRR-MM-DD.jsonl.
-- Akcja **Wyślij alert testowy** i kontrola **Alerty**.`,
-    fr_FR: `Alertes en temps réel via ntfy (désactivées tant que vous ne les configurez pas).
+- Każdy wpis w **Skonfiguruj odbiornik > Dozwoleni nadawcy** ma własny limit **Alarm po ciszy trwającej**. Zostaw go pustym dla urządzeń, które logują tylko wtedy, gdy coś się dzieje, jak wiele serwerów NAS, aby nie wywoływały już fałszywych alertów.
+- Istniejące pojedyncze adresy zachowują dotychczasowy limit (domyślnie 15 minut): wyczyść go dla urządzeń, które nie mają być obserwowane.
+- **Skonfiguruj alerty** pokazuje pod przełącznikiem reguły i po zapisaniu, które urządzenia są obserwowane i gdzie to zmienić.`,
+    fr_FR: `« Journalisation arrêtée » se règle désormais par appareil.
 
-- **Configurer les alertes** : serveur ntfy, sujet et jeton d'accès facultatif (saisi ou lu dans Vaultwarden), simulation, délai de répit et un dossier NAS facultatif pour les enregistrements d'alertes.
-- **Configurer Vaultwarden** est désormais une action à part, partagée par la copie vers le NAS et les alertes, avec une vérification **Vaultwarden** (déverrouillage et synchronisation). Les données Vaultwarden existantes de la copie vers le NAS y sont reprises automatiquement ; le formulaire NAS ne demande plus que le nom de l'élément.
-- **Règles intégrées, aucune liée à une marque d'appareil** : journalisation arrêtée (et reprise) chez un expéditeur autorisé, expéditeur inconnu, message syslog de gravité élevée, pic de volume, problème du collecteur (copie vers le NAS en échec, disque presque plein) et rafales d'échecs de connexion (textes OpenSSH/PAM). Chacune peut être désactivée et réglée.
-- **Règles personnalisées** : alerter sur les lignes contenant votre propre texte, éventuellement par appareil et après plusieurs correspondances.
-- Les notifications ne contiennent jamais de texte des journaux, seulement la règle, l'appareil et un nombre. Chaque alerte est enregistrée avec les fichiers et numéros de ligne qui l'ont déclenchée, dans alerts/AAAA-MM-JJ.jsonl.
-- Action **Envoyer une alerte de test** et vérification **Alertes**.`,
+- Chaque entrée de **Configurer le récepteur > Expéditeurs autorisés** a sa propre limite **Alerter après un silence de**. Laissez-la vide pour les appareils qui ne journalisent que lorsqu'il se passe quelque chose, comme beaucoup de NAS : ils ne déclenchent plus de fausses alertes.
+- Les adresses individuelles existantes gardent leur limite (15 minutes par défaut) : effacez-la pour les appareils à ne pas surveiller.
+- **Configurer les alertes** indique, sous l'interrupteur de la règle et après l'enregistrement, quels appareils sont surveillés et où le modifier.`,
   },
   migrations: {
-    up: vaultwardenOutOfNas,
-    // Older versions keep the alert settings in settings.json but ignore them.
-    down: vaultwardenIntoNas,
+    up: silenceLimitPerSender,
+    down: silenceLimitShared,
   },
 })

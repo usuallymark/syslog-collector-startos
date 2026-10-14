@@ -11,7 +11,18 @@ export type FolderNaming = (typeof FOLDER_NAMINGS)[number]
 export const CREDENTIAL_SOURCES = ['manual', 'vaultwarden'] as const
 export type CredentialSource = (typeof CREDENTIAL_SOURCES)[number]
 
-export type AllowedSender = { address: string; label: string }
+// silentMinutes: alert ("Logging stopped") when this sender has sent
+// nothing for this long; null: never. Single addresses only.
+export type AllowedSender = {
+  address: string
+  label: string
+  silentMinutes: number | null
+}
+
+// Suggested for a new allow-list entry; the user clears it for devices that
+// only log when something happens.
+export const DEFAULT_SILENT_MINUTES = 15
+export const MAX_SILENT_MINUTES = 10080
 
 export const DEFAULT_SETTINGS = {
   port: 5514,
@@ -71,7 +82,7 @@ export type CustomRule = {
 }
 
 export const DEFAULT_RULES = {
-  stopped: { on: true, minutes: 15, priority: 4 },
+  stopped: { on: true, priority: 4 },
   unknownSender: { on: true, priority: 4 },
   severity: { on: true, max: 2, priority: 4 },
   volume: { on: true, factor: 10, minLines: 200, priority: 3 },
@@ -123,10 +134,7 @@ const alertsShape = z.looseObject({
   nasFolder: z.string().catch(''),
   rules: z
     .looseObject({
-      stopped: ruleShape(
-        { minutes: z.number().int().min(1).catch(R.stopped.minutes) },
-        R.stopped,
-      ),
+      stopped: ruleShape({}, R.stopped),
       unknownSender: ruleShape({}, R.unknownSender),
       severity: ruleShape(
         { max: z.number().int().min(0).max(7).catch(R.severity.max) },
@@ -205,6 +213,13 @@ const shape = z.looseObject({
       z.looseObject({
         address: z.string(),
         label: z.string().catch(''),
+        silentMinutes: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_SILENT_MINUTES)
+          .nullable()
+          .catch(null),
       }),
     )
     .catch([]),

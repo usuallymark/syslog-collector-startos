@@ -59,7 +59,7 @@ Open **Log Center > Log Sending**:
 
 ## Limiting who can send
 
-Until you set an allow-list, anything that can reach the address and port can write logs, including fake lines. Log Collector still accepts them, so your first test works, but it raises a task asking you to set the list, and the **Rejected Senders** health check shows a warning beginning "Danger: No allow-list". In **Configure Receiver > Allowed Senders**, list the devices that may send: an IPv4 address (`10.0.0.1`), an IPv4 range (`10.0.0.0/24`) or an IPv6 address, each with an optional label. Messages from any other address are dropped before they are written.
+Until you set an allow-list, anything that can reach the address and port can write logs, including fake lines. Log Collector still accepts them, so your first test works, but it raises a task asking you to set the list, and the **Rejected Senders** health check shows a warning beginning "Danger: No allow-list". In **Configure Receiver > Allowed Senders**, list the devices that may send: an IPv4 address (`10.0.0.1`), an IPv4 range (`10.0.0.0/24`) or an IPv6 address, each with an optional label and, for alerts, how long it may stay silent (see Alerts). Messages from any other address are dropped before they are written.
 
 The check uses the address a message actually comes from, not the hostname written inside it, which a sender can fake. A UDP sender address can still be forged on the local network, so prefer TCP on devices that support it.
 
@@ -87,7 +87,7 @@ While the copy is on, a file is only deleted from this server after it has been 
 
 Built-in rules, each on by default and adjustable:
 
-- **Logging stopped**: a device on the allow-list has sent nothing for 15 minutes, and again when it resumes. Watches single addresses on the allow-list (not ranges), named by their label.
+- **Logging stopped**: a device on the allow-list has sent nothing for longer than its own limit, and again when it resumes. The limit is set per device, in **Configure Receiver > Allowed Senders > Alert If Silent For** (15 minutes for a new entry). Leave it blank for devices that only log when something happens, such as many NAS systems. Only single addresses are watched, not ranges, named by their label. Configure Alerts shows which devices are watched.
 - **Unknown sender**: an address not on the allow-list tried to send.
 - **High-severity message**: a syslog message of severity critical, alert or emergency from any device.
 - **Volume spike**: a device sends 10 times its usual rate within 10 minutes (and at least 200 lines). Starts after 6 hours of history.

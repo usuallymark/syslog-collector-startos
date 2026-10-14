@@ -2,13 +2,15 @@ import {
   DEFAULT_ALERTS,
   DEFAULT_NAS,
   DEFAULT_SETTINGS,
+  DEFAULT_SILENT_MINUTES,
   DEFAULT_VAULTWARDEN,
+  MAX_SILENT_MINUTES,
   type FolderNaming,
   settingsJson,
 } from '../fileModels/settings.json'
 import { i18n } from '../i18n'
 import { sdk } from '../sdk'
-import { parseSender } from '../senders'
+import { parseSender, singleAddress } from '../senders'
 import {
   REGIONS,
   UTC,
@@ -151,9 +153,27 @@ const inputSpec = InputSpec.of({
           }),
           label: Value.text({
             name: i18n('Label'),
-            description: i18n('Optional, for your reference, e.g. firewall.'),
+            description: i18n(
+              'Optional, for your reference and in alerts, e.g. firewall.',
+            ),
             required: false,
             default: null,
+          }),
+          silentMinutes: Value.number({
+            name: i18n('Alert If Silent For'),
+            description: i18n(
+              'The "Logging stopped" alert (Configure Alerts) fires when this device has sent nothing for this long. Leave blank for devices that only log when something happens, such as many NAS systems. Only for a single address, not a range.',
+            ),
+            footnote: i18n(
+              'Blank: never reported as silent. Ranges are never watched.',
+            ),
+            required: false,
+            default: DEFAULT_SILENT_MINUTES,
+            min: 1,
+            max: MAX_SILENT_MINUTES,
+            integer: true,
+            step: 1,
+            units: i18n('minutes'),
           }),
         }),
         displayAs: '{{address}} {{label}}',
@@ -199,6 +219,7 @@ export const configureReceiver = sdk.Action.withInput(
       allowedSenders: s.allowedSenders.map((a) => ({
         address: a.address,
         label: a.label || null,
+        silentMinutes: a.silentMinutes ?? null,
       })),
     } as any
   },
@@ -224,6 +245,10 @@ export const configureReceiver = sdk.Action.withInput(
     const allowedSenders = (input.allowedSenders ?? []).map((a) => ({
       address: a.address.trim(),
       label: (a.label ?? '').trim(),
+      // Ranges cannot be watched for silence.
+      silentMinutes: singleAddress(a.address)
+        ? (a.silentMinutes ?? null)
+        : null,
     }))
     const invalid = allowedSenders.find((a) => !parseSender(a.address))
     if (invalid) {

@@ -1,6 +1,7 @@
 import { secretsJson, writeSecrets } from '../fileModels/secrets.json'
 import {
   type AlertSettings,
+  type AllowedSender,
   DEFAULT_ALERTS,
   DEFAULT_RULES,
   type TokenSource,
@@ -8,6 +9,7 @@ import {
 } from '../fileModels/settings.json'
 import { i18n } from '../i18n'
 import { sdk } from '../sdk'
+import { singleAddress } from '../senders'
 
 const { InputSpec, Value, Variants, List } = sdk
 
@@ -50,17 +52,58 @@ const minutes = (name: string, d: number, description: string | null) =>
 
 const R = DEFAULT_RULES
 
+/**
+ * Which devices "Logging stopped" watches, and where to change that: shown
+ * under the rule's switch and after saving, since the limits live with each
+ * sender in Configure Receiver, not in this form.
+ */
+function silenceSummary(senders: AllowedSender[]): string {
+  const singles = senders.filter((s) => singleAddress(s.address))
+  const name = (s: AllowedSender) => s.label || s.address
+  if (!singles.length) {
+    return i18n(
+      'No device is watched yet: add single addresses in Configure Receiver > Allowed Senders and set Alert If Silent For.',
+    )
+  }
+  const watched = singles
+    .filter((s) => s.silentMinutes)
+    .map((s) =>
+      i18n('${name} (${n} min)', { name: name(s), n: s.silentMinutes! }),
+    )
+  const quiet = singles.filter((s) => !s.silentMinutes).map(name)
+  return [
+    watched.length
+      ? i18n('Watched: ${list}.', { list: watched.join(', ') })
+      : i18n('No device is watched.'),
+    quiet.length
+      ? i18n('Not watched: ${list}.', { list: quiet.join(', ') })
+      : '',
+    i18n(
+      'Change this per device in Configure Receiver > Allowed Senders (Alert If Silent For).',
+    ),
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
 const rulesSpec = InputSpec.of({
   stopped: Value.object(
     {
       name: i18n('Logging stopped'),
       description: i18n(
-        'A device on the allow-list has sent nothing for this long, and a second alert when it sends again. Watches each single address on the allow-list (not ranges), named by its label.',
+        'A device on the allow-list has sent nothing for longer than its own limit, and a second alert when it sends again. Which devices are watched, and for how long, is set per device in Configure Receiver > Allowed Senders (Alert If Silent For).',
       ),
     },
     InputSpec.of({
-      on: onOff(R.stopped.on),
-      minutes: minutes(i18n('Quiet For'), R.stopped.minutes, null),
+      on: Value.dynamicToggle(async () => {
+        const senders =
+          (await settingsJson.read((s) => s.allowedSenders).once()) ?? []
+        return {
+          name: i18n('On'),
+          default: R.stopped.on,
+          footnote: silenceSummary(senders),
+        }
+      }),
       priority: priority(R.stopped.priority),
     }),
   ),
@@ -421,7 +464,7 @@ function prefill(a: AlertSettings) {
         cooldownMinutes: a.cooldownMinutes,
         nasFolder: a.nasFolder || null,
         rules: {
-          stopped: { ...r.stopped, priority: p(r.stopped.priority) },
+          stopped: { on: r.stopped.on, priority: p(r.stopped.priority) },
           unknownSender: {
             ...r.unknownSender,
             priority: p(r.unknownSender.priority),
@@ -581,7 +624,6 @@ export const configureAlerts = sdk.Action.withInput(
       rules: {
         stopped: {
           on: !!r.stopped.on,
-          minutes: num(r.stopped.minutes),
           priority: num(r.stopped.priority),
         },
         unknownSender: {
@@ -620,16 +662,20 @@ export const configureAlerts = sdk.Action.withInput(
       alerts: next,
     })
 
+    const saved = next.dryRun
+      ? i18n(
+          'Saved, in dry run: alerts are recorded but not sent. Use Send Test Alert to check that notifications reach your phone.',
+        )
+      : i18n(
+          'Saved. Use Send Test Alert to check that notifications reach your phone.',
+        )
+    const silence = next.rules.stopped.on
+      ? `${i18n('Logging stopped:')} ${silenceSummary(current?.allowedSenders ?? [])}`
+      : ''
     return {
       version: '1' as const,
       title: i18n('Alerts Configured'),
-      message: next.dryRun
-        ? i18n(
-            'Saved, in dry run: alerts are recorded but not sent. Use Send Test Alert to check that notifications reach your phone.',
-          )
-        : i18n(
-            'Saved. Use Send Test Alert to check that notifications reach your phone.',
-          ),
+      message: [saved, silence].filter(Boolean).join(' '),
       result: null,
     }
   },

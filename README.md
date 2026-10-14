@@ -112,7 +112,8 @@ Copy check, which also fails when no copy succeeded for two intervals.
 restarts resume and line numbers stay right; existing lines are skipped on the
 first start), parses `<time> <ip> <facility>.<severity> <host> <tag> <msg>`,
 and applies the rules from the `alerts` section of `/etc/collector.json`:
-`stopped`/`resumed` (single-address allow-list entries), `unknownSender`
+`stopped`/`resumed` (single-address allow-list entries with their own
+`silentMinutes`; blank entries are not watched), `unknownSender`
 (increases in `rejected.json`), `severity` (≤ max), `volume` (10-minute
 buckets against the mean of the last 144, after 36), `collector` (NAS copy
 error with no success for an hour, < 5 % disk free), `authBurst` (OpenSSH/PAM

@@ -20,7 +20,7 @@ import {
 import { i18n } from './i18n'
 import { syslogHostId } from './interfaces'
 import { rsyslogConf } from './rsyslogConf'
-import { parseSender } from './senders'
+import { parseSender, singleAddress } from './senders'
 import { sdk } from './sdk'
 import {
   ALERTS_STATUS,
@@ -150,7 +150,7 @@ async function readAlertStatus(): Promise<AlertStatus> {
  * stays in secrets.json. */
 function alertsConfig(
   a: AlertSettings,
-  watched: { ip: string; name: string }[],
+  watched: { ip: string; name: string; minutes: number }[],
 ) {
   return {
     enabled: a.enabled,
@@ -269,14 +269,14 @@ export const main = sdk.setupMain(async ({ effects }) => {
     ...DEFAULT_ALERTS,
     ...(stored?.alerts ?? {}),
   } as AlertSettings
-  // "Logging stopped" watches each single address on the allow-list, named
-  // by its label.
-  const watched = settings.allowedSenders
-    .filter((s) => {
-      const r = parseSender(s.address)
-      return r && (r.kind === 'v6' || r.first === r.last)
-    })
-    .map((s) => ({ ip: s.address.trim(), name: s.label || s.address.trim() }))
+  // "Logging stopped" watches each single address on the allow-list that has
+  // its own silence limit, named by its label.
+  const watched = settings.allowedSenders.flatMap((s) => {
+    const ip = singleAddress(s.address)
+    return ip && s.silentMinutes
+      ? [{ ip, name: s.label || ip, minutes: s.silentMinutes }]
+      : []
+  })
 
   const collectorConfig = {
     localRetentionDays: settings.retentionDays,

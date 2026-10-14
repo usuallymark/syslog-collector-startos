@@ -47,3 +47,15 @@ export function allowCondition(addresses: string[]): string | null {
     )
     .join(' or ')
 }
+
+/**
+ * The one address an entry stands for, as the sender's IP appears in the
+ * logs, or null for a range. Only these can be watched for silence.
+ */
+export function singleAddress(address: string): string | null {
+  const r = parseSender(address)
+  if (!r) return null
+  if (r.kind === 'v6') return r.ip
+  if (r.first !== r.last) return null
+  return [24, 16, 8, 0].map((s) => Math.floor(r.first / 2 ** s) % 256).join('.')
+}

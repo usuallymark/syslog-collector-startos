@@ -378,7 +378,8 @@ def run(full_cfg):
             log(f'custom rule "{c["name"]}" skipped: {e}')
             continue
         custom.append((c, pattern, set(c.get('devices') or [])))
-    watched = {w['ip']: w['name'] for w in cfg.get('watched', [])}
+    # Single allowed addresses with their own silence limit: IP -> (name, seconds).
+    watched = {w['ip']: (w['name'], int(w.get('minutes', 15)) * 60) for w in cfg.get('watched', [])}
 
     state = load_json(STATE_FILE, {})
     first_run = 'files' not in state
@@ -391,6 +392,8 @@ def run(full_cfg):
     started = time.time()
     for ip in watched:
         seen.setdefault(ip, started)
+    for ip in [ip for ip in stopped if ip not in watched]:
+        del stopped[ip]  # no longer watched: no "resumed" alert for it
     tailer.scan(start_at_end=first_run)
     if first_run:  # earlier rejections are not news
         for ip, e in load_json(REJECTED_FILE, {}).get('ips', {}).items():
@@ -434,7 +437,7 @@ def run(full_cfg):
             seen[ip] = now
             if ip in stopped:
                 if (rules.get('stopped') or {}).get('on'):
-                    alerts.event('resumed', watched.get(ip, ip), ref, now)
+                    alerts.event('resumed', watched.get(ip, (ip, 0))[0], ref, now)
                 del stopped[ip]
 
             r = rules.get('severity') or {}
@@ -468,8 +471,7 @@ def run(full_cfg):
             last_minute = now
             r = rules.get('stopped') or {}
             if r.get('on'):
-                limit = int(r.get('minutes', 15)) * 60
-                for ip, name in watched.items():
+                for ip, (name, limit) in watched.items():
                     if ip not in stopped and now - seen.get(ip, started) > limit:
                         stopped[ip] = now
                         alerts.event('stopped', name, None, now)
