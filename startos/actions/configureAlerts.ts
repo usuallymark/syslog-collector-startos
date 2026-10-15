@@ -263,22 +263,65 @@ const customSpec = InputSpec.of({
 })
 
 const enabledSpec = InputSpec.of({
-  ntfyUrl: Value.text({
+  ntfyServer: Value.union({
     name: i18n('ntfy Server'),
     description: i18n(
-      'The address of your ntfy server, e.g. https://ntfy.example.com, or https://ntfy.sh.',
+      'Where your ntfy server runs. "On this server": the ntfy service on this StartOS server, with no address or certificate to enter. "At an address": any other ntfy server, e.g. https://ntfy.sh.',
     ),
-    required: true,
-    default: null,
-    placeholder: 'https://ntfy.example.com',
-    patterns: [
-      {
-        regex: '^https?://[^/\\s]+/?$',
-        description: i18n(
-          'An address such as https://ntfy.example.com, with nothing after the host and port.',
-        ),
+    default: 'address',
+    variants: Variants.of({
+      local: { name: i18n('On this server'), spec: InputSpec.of({}) },
+      address: {
+        name: i18n('At an address'),
+        spec: InputSpec.of({
+          url: Value.text({
+            name: i18n('Server Address'),
+            description: i18n(
+              'The address of your ntfy server, e.g. https://ntfy.example.com, or https://ntfy.sh.',
+            ),
+            required: true,
+            default: null,
+            placeholder: 'https://ntfy.example.com',
+            patterns: [
+              {
+                regex: '^https?://[^/\\s]+/?$',
+                description: i18n(
+                  'An address such as https://ntfy.example.com, with nothing after the host and port.',
+                ),
+              },
+            ],
+          }),
+          ntfyIp: Value.text({
+            name: i18n('ntfy IP Address'),
+            description: i18n(
+              'Only needed when the server address uses a name ending in .local, which StartOS services cannot look up: the IP address that name stands for. Leave blank otherwise.',
+            ),
+            required: false,
+            default: null,
+            placeholder: 'e.g. 10.0.0.5',
+            patterns: [
+              {
+                regex:
+                  '^((25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(25[0-5]|2[0-4]\\d|1?\\d?\\d)$',
+                description: i18n('An IPv4 address, e.g. 10.0.0.5.'),
+              },
+            ],
+          }),
+          caCert: Value.textarea({
+            name: i18n('Custom CA Certificate'),
+            description: i18n(
+              "Only needed when the ntfy server's HTTPS certificate is signed by your own certificate authority. Paste the PEM block.",
+            ),
+            required: false,
+            default: null,
+            minRows: 4,
+            maxRows: 12,
+            placeholder:
+              '-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----',
+          }),
+        }),
       },
-    ],
+    }),
   }),
   ntfyTopic: Value.text({
     name: i18n('Topic'),
@@ -338,33 +381,6 @@ const enabledSpec = InputSpec.of({
         }),
       },
     }),
-  }),
-  ntfyIp: Value.text({
-    name: i18n('ntfy IP Address'),
-    description: i18n(
-      'Only needed when the server address uses a name ending in .local, which StartOS services cannot look up: the IP address that name stands for. Leave blank otherwise.',
-    ),
-    required: false,
-    default: null,
-    placeholder: 'e.g. 10.0.0.5',
-    patterns: [
-      {
-        regex:
-          '^((25[0-5]|2[0-4]\\d|1?\\d?\\d)\\.){3}(25[0-5]|2[0-4]\\d|1?\\d?\\d)$',
-        description: i18n('An IPv4 address, e.g. 10.0.0.5.'),
-      },
-    ],
-  }),
-  caCert: Value.textarea({
-    name: i18n('Custom CA Certificate'),
-    description: i18n(
-      "Only needed when the ntfy server's HTTPS certificate is signed by your own certificate authority. Paste the PEM block.",
-    ),
-    required: false,
-    default: null,
-    minRows: 4,
-    maxRows: 12,
-    placeholder: '-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----',
   }),
   dryRun: Value.toggle({
     name: i18n('Dry Run'),
@@ -444,7 +460,17 @@ function prefill(a: AlertSettings) {
     alerts: {
       selection: 'enabled',
       value: {
-        ntfyUrl: a.ntfyUrl || null,
+        ntfyServer:
+          a.ntfyLocation === 'local'
+            ? { selection: 'local', value: {} }
+            : {
+                selection: 'address',
+                value: {
+                  url: a.ntfyUrl || null,
+                  ntfyIp: a.ntfyIp || null,
+                  caCert: a.ntfyCa || null,
+                },
+              },
         ntfyTopic: a.ntfyTopic || null,
         token:
           a.tokenSource === 'manual'
@@ -458,8 +484,6 @@ function prefill(a: AlertSettings) {
                   },
                 }
               : { selection: 'none', value: {} },
-        ntfyIp: a.ntfyIp || null,
-        caCert: a.ntfyCa || null,
         dryRun: a.dryRun,
         cooldownMinutes: a.cooldownMinutes,
         nasFolder: a.nasFolder || null,
@@ -547,22 +571,39 @@ export const configureAlerts = sdk.Action.withInput(
         ),
       )
     }
-    const pems = (v.caCert ?? '').match(PEM_RE) ?? []
-    if (clean(v.caCert) && !pems.length) {
-      throw new Error(
-        i18n(
-          'The CA certificate must be a PEM block from -----BEGIN CERTIFICATE----- to -----END CERTIFICATE-----.',
-        ),
-      )
+    // On this server: the address details stay as they were, so switching
+    // back to "At an address" needs no retyping.
+    let server = {
+      ntfyLocation: 'local' as AlertSettings['ntfyLocation'],
+      ntfyUrl: prev.ntfyUrl,
+      ntfyIp: prev.ntfyIp,
+      ntfyCa: prev.ntfyCa,
     }
-    const ntfyHost = new URL(clean(v.ntfyUrl)).hostname
-    if (ntfyHost.endsWith('.local') && !clean(v.ntfyIp)) {
-      throw new Error(
-        i18n(
-          '"${host}" ends in .local, which StartOS services cannot look up. Enter the IP address it stands for.',
-          { host: ntfyHost },
-        ),
-      )
+    if (v.ntfyServer.selection === 'address') {
+      const a = v.ntfyServer.value
+      const pems = (a.caCert ?? '').match(PEM_RE) ?? []
+      if (clean(a.caCert) && !pems.length) {
+        throw new Error(
+          i18n(
+            'The CA certificate must be a PEM block from -----BEGIN CERTIFICATE----- to -----END CERTIFICATE-----.',
+          ),
+        )
+      }
+      const ntfyHost = new URL(clean(a.url)).hostname
+      if (ntfyHost.endsWith('.local') && !clean(a.ntfyIp)) {
+        throw new Error(
+          i18n(
+            '"${host}" ends in .local, which StartOS services cannot look up. Enter the IP address it stands for.',
+            { host: ntfyHost },
+          ),
+        )
+      }
+      server = {
+        ntfyLocation: 'address',
+        ntfyUrl: clean(a.url).replace(/\/+$/, ''),
+        ntfyIp: clean(a.ntfyIp),
+        ntfyCa: pems.join('\n'),
+      }
     }
     const nasFolder = clean(v.nasFolder).replace(/^\/+|\/+$/g, '')
     if (nasFolder && !current?.nas?.enabled) {
@@ -609,9 +650,8 @@ export const configureAlerts = sdk.Action.withInput(
       enabled: true,
       dryRun: !!v.dryRun,
       cooldownMinutes: num(v.cooldownMinutes),
-      ntfyUrl: clean(v.ntfyUrl).replace(/\/+$/, ''),
+      ...server,
       ntfyTopic: clean(v.ntfyTopic),
-      ntfyCa: pems.join('\n'),
       tokenSource,
       tokenVaultItem:
         tokenSource === 'vaultwarden' ? clean(v.token.value.item) : '',
@@ -619,7 +659,6 @@ export const configureAlerts = sdk.Action.withInput(
         tokenSource === 'vaultwarden'
           ? clean(v.token.value.field) || 'api_key'
           : 'api_key',
-      ntfyIp: clean(v.ntfyIp),
       nasFolder,
       rules: {
         stopped: {

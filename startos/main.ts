@@ -27,6 +27,9 @@ import {
   CA_BUNDLE,
   COLLECTOR_CONF,
   LOGS_DIR,
+  NTFY_HOST_ID,
+  NTFY_ID,
+  NTFY_PORT,
   PUSH_STATE,
   REJECTED_STATE,
   RSYSLOG_STATS,
@@ -37,6 +40,9 @@ import {
   TLS_CERT,
   TLS_DIR,
   TLS_KEY,
+  VAULTWARDEN_HOST_ID,
+  VAULTWARDEN_ID,
+  VAULTWARDEN_PORT,
 } from './utils'
 
 const DAY_FILE = /^\d{4}-\d{2}-\d{2}\.log$/
@@ -154,6 +160,7 @@ async function readAlertStatus(): Promise<AlertStatus> {
  * stays in secrets.json. */
 function alertsConfig(
   a: AlertSettings,
+  ntfyUrl: string,
   watched: { ip: string; name: string; minutes: number }[],
 ) {
   return {
@@ -162,7 +169,7 @@ function alertsConfig(
     cooldownMinutes: a.cooldownMinutes,
     nasFolder: a.enabled ? a.nasFolder : '',
     ntfy: {
-      url: a.ntfyUrl,
+      url: ntfyUrl,
       topic: a.ntfyTopic,
       tokenSource: a.tokenSource,
       vaultItem: a.tokenVaultItem,
@@ -298,7 +305,24 @@ export const main = sdk.setupMain(async ({ effects }) => {
     ...DEFAULT_VAULTWARDEN,
     ...(stored?.vaultwarden ?? {}),
   }
-  const vaultBaseUrl = vault.enabled && vault.url ? vault.url : null
+  // On this server: Vaultwarden's address on StartOS's internal network,
+  // asked for at every start (null while it is not installed).
+  const vaultLocal = vault.enabled && vault.location === 'local'
+  const vaultBridge = vaultLocal
+    ? await sdk.host
+        .getBridgeAddress(effects, {
+          packageId: VAULTWARDEN_ID,
+          hostId: VAULTWARDEN_HOST_ID,
+          internalPort: VAULTWARDEN_PORT,
+          ssl: false,
+        })
+        .const()
+    : null
+  const vaultBaseUrl = !vault.enabled
+    ? null
+    : vaultLocal
+      ? vaultBridge && `http://${vaultBridge}`
+      : vault.url || null
 
   // secrets.json is root-only (installs from 8.2504.0:1 wrote it readable).
   await restrictSecrets()
@@ -369,6 +393,24 @@ export const main = sdk.setupMain(async ({ effects }) => {
     ...DEFAULT_ALERTS,
     ...(stored?.alerts ?? {}),
   } as AlertSettings
+  // ntfy on this server: its address on StartOS's internal network, like
+  // Vaultwarden's ('' while it is not installed: alerts wait in the queue).
+  const ntfyLocal = alerts.enabled && alerts.ntfyLocation === 'local'
+  const ntfyBridge = ntfyLocal
+    ? await sdk.host
+        .getBridgeAddress(effects, {
+          packageId: NTFY_ID,
+          hostId: NTFY_HOST_ID,
+          internalPort: NTFY_PORT,
+          ssl: false,
+        })
+        .const()
+    : null
+  const ntfyUrl = ntfyLocal
+    ? ntfyBridge
+      ? `http://${ntfyBridge}`
+      : ''
+    : alerts.ntfyUrl
   // "Logging stopped" watches each single address on the allow-list that has
   // its own silence limit, named by its label.
   const watched = settings.allowedSenders.flatMap((s) => {
@@ -383,7 +425,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
     allowList: allowed.length > 0,
     nas: collectorNas(nas),
     vault: vaultBaseUrl ? { email: vault.email, baseUrl: vaultBaseUrl } : null,
-    alerts: alertsConfig(alerts, watched),
+    alerts: alertsConfig(alerts, ntfyUrl, watched),
   }
   await writeFile(
     `${rootfs}${COLLECTOR_CONF}`,
@@ -410,12 +452,12 @@ export const main = sdk.setupMain(async ({ effects }) => {
     )
   }
   // .local names StartOS cannot look up (Vaultwarden's, ntfy's): mapped to
-  // the IPs entered.
+  // the IPs entered. Only at an address; on this server there is no name.
   const mappings: { host: string; ip: string }[] = []
-  if (vaultBaseUrl && vault.ip) {
+  if (vaultBaseUrl && !vaultLocal && vault.ip) {
     mappings.push({ host: new URL(vaultBaseUrl).hostname, ip: vault.ip })
   }
-  if (alerts.enabled && alerts.ntfyUrl && alerts.ntfyIp) {
+  if (alerts.enabled && !ntfyLocal && alerts.ntfyUrl && alerts.ntfyIp) {
     mappings.push({ host: new URL(alerts.ntfyUrl).hostname, ip: alerts.ntfyIp })
   }
   if (mappings.length) {
@@ -424,10 +466,11 @@ export const main = sdk.setupMain(async ({ effects }) => {
     await writeFile(hostsPath, withHostsBlock(existing, mappings))
   }
   // Own certificate authorities (Vaultwarden's, ntfy's): trusted on top of
-  // the system ones, by rbw and by the alert sender.
+  // the system ones, by rbw and by the alert sender. Only at an address; on
+  // this server the connection is plain HTTP inside StartOS.
   const extraCas = [
-    vaultBaseUrl ? vault.ca : '',
-    alerts.enabled ? alerts.ntfyCa : '',
+    vaultBaseUrl && !vaultLocal ? vault.ca : '',
+    alerts.enabled && !ntfyLocal ? alerts.ntfyCa : '',
   ]
     .map((c) => c.trim())
     .filter(Boolean)
@@ -581,6 +624,14 @@ export const main = sdk.setupMain(async ({ effects }) => {
             failure: 60_000,
           }),
           fn: async () => {
+            if (vaultLocal && !vaultBaseUrl) {
+              return {
+                result: 'failure',
+                message: i18n(
+                  'Vaultwarden on this server is chosen, but Vaultwarden is not installed here. Install it, or choose "At an address" in Configure Vaultwarden.',
+                ),
+              }
+            }
             if (!vaultBaseUrl) {
               return {
                 result: 'disabled',
@@ -592,12 +643,18 @@ export const main = sdk.setupMain(async ({ effects }) => {
             })
             const err = String(res.stderr).trim().split('\n').pop() ?? ''
             if (res.exitCode === 10) {
+              const error = err || 'unknown error'
               return {
                 result: 'failure',
-                message: i18n(
-                  'Cannot sign in or unlock: ${error}. Check the URL, email and master password. rbw 1.15.0 works with Vaultwarden up to 1.35.x.',
-                  { error: err || 'unknown error' },
-                ),
+                message: vaultLocal
+                  ? i18n(
+                      'Cannot sign in or unlock: ${error}. Check the email and master password.',
+                      { error },
+                    )
+                  : i18n(
+                      'Cannot sign in or unlock: ${error}. Check the URL, email and master password.',
+                      { error },
+                    ),
               }
             }
             if (res.exitCode !== 0) {
@@ -611,9 +668,11 @@ export const main = sdk.setupMain(async ({ effects }) => {
             }
             return {
               result: 'success',
-              message: i18n('Unlocked and synced (${host})', {
-                host: new URL(vaultBaseUrl).host,
-              }),
+              message: vaultLocal
+                ? i18n('Unlocked and synced (Vaultwarden on this server)')
+                : i18n('Unlocked and synced (${host})', {
+                    host: new URL(vaultBaseUrl).host,
+                  }),
             }
           },
         },
@@ -628,6 +687,14 @@ export const main = sdk.setupMain(async ({ effects }) => {
               return {
                 result: 'disabled',
                 message: i18n('Off. Turn them on in Configure Alerts.'),
+              }
+            }
+            if (ntfyLocal && !ntfyUrl) {
+              return {
+                result: 'failure',
+                message: i18n(
+                  'ntfy on this server is chosen, but ntfy is not installed here. Install it, or choose "At an address" in Configure Alerts.',
+                ),
               }
             }
             const s = await readAlertStatus()

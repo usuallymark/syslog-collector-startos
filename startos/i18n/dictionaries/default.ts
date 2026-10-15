@@ -173,7 +173,7 @@ const dict = {
   'Vaultwarden Master Password': 175,
   'Used to unlock the vault. It is stored in a root-only file on this server. Leave blank to keep the password already saved.': 176,
   Vaultwarden: 177,
-  'Read secrets (the NAS login, the ntfy token) from a Vaultwarden or Bitwarden-compatible server instead of storing them here. Works with Vaultwarden up to version 1.35.x: the bundled rbw 1.15.0 cannot sign in to 1.36 or later.': 178,
+  'Read secrets (the NAS login, the ntfy token) from a Vaultwarden or Bitwarden-compatible server instead of storing them here. "On this server": the Vaultwarden service on this StartOS server, with no address or certificate to enter. "At an address": a Vaultwarden anywhere else.': 178,
   'Configure Vaultwarden': 179,
   'Connect to your Vaultwarden, so the NAS copy and alerts can read their secrets from it.': 180,
   'Vaultwarden Off': 181,
@@ -202,7 +202,7 @@ const dict = {
   'Port ${chosen} is already used on this server, so StartOS assigned port ${assigned}. Choose another port in Configure Receiver, or point your devices at ${assigned}.': 204,
   'Listening on port ${port} (${protocols})': 205,
   'Not set up. Configure Vaultwarden to use it.': 206,
-  'Cannot sign in or unlock: ${error}. Check the URL, email and master password. rbw 1.15.0 works with Vaultwarden up to 1.35.x.': 207,
+  'Cannot sign in or unlock: ${error}. Check the URL, email and master password.': 207,
   'Unlocked, but the sync failed: ${error}. Secrets come from the last copy until it works again.': 208,
   'Unlocked and synced (${host})': 209,
   'Off. Turn them on in Configure Alerts.': 210,
@@ -255,6 +255,14 @@ const dict = {
   'StartOS did not provide a certificate: ${error}': 257,
   'rsyslog is not listening for TLS yet': 258,
   'Encrypted on port ${port}. Devices connect to ${names} and must trust the root CA of this server.': 259,
+  'On this server': 260,
+  'At an address': 261,
+  'Cannot sign in or unlock: ${error}. Check the email and master password.': 262,
+  'Unlocked and synced (Vaultwarden on this server)': 263,
+  'Vaultwarden on this server is chosen, but Vaultwarden is not installed here. Install it, or choose "At an address" in Configure Vaultwarden.': 264,
+  'ntfy on this server is chosen, but ntfy is not installed here. Install it, or choose "At an address" in Configure Alerts.': 265,
+  'Where your ntfy server runs. "On this server": the ntfy service on this StartOS server, with no address or certificate to enter. "At an address": any other ntfy server, e.g. https://ntfy.sh.': 266,
+  'Server Address': 267,
 } as const
 
 /**

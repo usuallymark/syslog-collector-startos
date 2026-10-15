@@ -11,6 +11,11 @@ export type FolderNaming = (typeof FOLDER_NAMINGS)[number]
 export const CREDENTIAL_SOURCES = ['manual', 'vaultwarden'] as const
 export type CredentialSource = (typeof CREDENTIAL_SOURCES)[number]
 
+// Where Vaultwarden or ntfy runs: at an address the user enters, or as a
+// service on this StartOS server, reached over StartOS's internal network.
+export const LOCATIONS = ['address', 'local'] as const
+export type Location = (typeof LOCATIONS)[number]
+
 // silentMinutes: alert ("Logging stopped") when this sender has sent
 // nothing for this long; null: never. Single addresses only.
 export type AllowedSender = {
@@ -56,6 +61,7 @@ export const DEFAULT_NAS = {
 // it (NAS login, ntfy token). Off and empty by default.
 export const DEFAULT_VAULTWARDEN = {
   enabled: false,
+  location: 'address' as Location,
   url: '',
   ip: '',
   ca: '',
@@ -64,6 +70,8 @@ export const DEFAULT_VAULTWARDEN = {
 
 const vaultwardenShape = z.looseObject({
   enabled: z.boolean().catch(false),
+  // Missing before 8.2504.0:9, when every Vaultwarden was at an address.
+  location: z.enum(LOCATIONS).catch('address'),
   url: z.string().catch(''),
   ip: z.string().catch(''),
   ca: z.string().catch(''),
@@ -98,6 +106,7 @@ export const DEFAULT_ALERTS = {
   enabled: false,
   dryRun: false,
   cooldownMinutes: 30,
+  ntfyLocation: 'address' as Location,
   ntfyUrl: '',
   ntfyTopic: '',
   ntfyCa: '',
@@ -128,6 +137,8 @@ const alertsShape = z.looseObject({
   enabled: z.boolean().catch(false),
   dryRun: z.boolean().catch(false),
   cooldownMinutes: z.number().int().min(1).max(1440).catch(30),
+  // Missing before 8.2504.0:9, when every ntfy server was at an address.
+  ntfyLocation: z.enum(LOCATIONS).catch('address'),
   ntfyUrl: z.string().catch(''),
   ntfyTopic: z.string().catch(''),
   ntfyCa: z.string().catch(''),

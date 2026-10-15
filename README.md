@@ -19,7 +19,7 @@ the technical reference.
 | Daemons | `receiver` (`rsyslogd -n`), `housekeeping` (`collector housekeeping`), `pusher` (`collector push`, NAS copy; idle while off), `alerter` (`collector alerts`, `docker/alerter.py`; idle while off) |
 | Oneshot | `vault-prepare` (`collector vault-prepare`): fresh rbw agent at every start, new sign-in when the Vaultwarden account or address changed |
 | Health checks | Receiver (port listening, and the external port StartOS assigned), TLS (certificate, port, names covered), Vaultwarden (rbw unlock + sync), Alerts, Last Message, Rejected Senders, NAS Copy, Log Storage |
-| Dependencies | none |
+| Dependencies | optional, only while "On this server" is chosen: `vaultwarden` (>=1.37.4:0) and `ntfy` (>=2.28.0:1), both requiring the `primary` health check |
 
 ## Interface
 
@@ -85,12 +85,17 @@ for `/etc/collector.json`, the settings of `docker/collector.py`.
   interval (5 min to 24 h, default 1 h), NAS retention days (default 30),
   login entered, or a Vaultwarden Login item (username and password).
   Passwords are never shown again; blank keeps the saved one.
-- **Configure Vaultwarden**: off by default and empty. URL, optional IP for a
-  `.local` name (written to the container's `/etc/hosts`), optional custom
-  CA (appended to the system bundle and passed as `SSL_CERT_FILE`), email,
-  master password (in `secrets.json`, read by rbw's pinentry). Shared by the
-  NAS copy and alerts. rbw 1.15.0 cannot sign in to Vaultwarden 1.36 or
-  later, so this works with Vaultwarden up to 1.35.x.
+- **Configure Vaultwarden**: off by default and empty. **On this server**:
+  email and master password only; the address is the bridge address of
+  Start9's `vaultwarden` package (host `main`, port 80, plain HTTP inside
+  StartOS), asked for with `sdk.host.getBridgeAddress` at every start.
+  **At an address**: URL, optional IP for a `.local` name (written to the
+  container's `/etc/hosts`), optional custom CA (appended to the system
+  bundle and passed as `SSL_CERT_FILE`), email, master password. The master
+  password is in `secrets.json`, read by rbw's pinentry. Shared by the NAS
+  copy and alerts. rbw 1.15.0 signs in, unlocks, syncs and reads with
+  Vaultwarden 1.37.4 (tested); it cannot create or edit items on 1.37 and
+  later (rbw issue #385), which this package never does.
 - **Push Now**: copies at once (the pusher polls for `/data/state/push-now`
   every 10 s).
 
@@ -133,7 +138,9 @@ cooldown that rolls repeats into a count. Records go to `/data/alerts`;
 notifications (fixed text, never log text, device names sanitised) to
 `<ntfy url>/<topic>` with `Title`, `Priority`, `Tags` and an optional bearer
 token from `secrets.json` or a Vaultwarden item field (`rbw get --field`,
-default `api_key`, as in OpenClaw Extra Butter), optional IP for a `.local`
+default `api_key`, as in OpenClaw Extra Butter). The ntfy URL is either the
+bridge address of Start9's `ntfy` package (host `ui-multi`, port 80; "On
+this server") or the address entered, with an optional IP for a `.local`
 ntfy host. Failed
 deliveries are retried with backoff (1 min doubling to 30 min, up to 20
 tries). `state/alert-test` (Send Test Alert) queues a test notification.

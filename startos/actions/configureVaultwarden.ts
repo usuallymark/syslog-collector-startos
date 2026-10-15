@@ -7,8 +7,27 @@ const { InputSpec, Value, Variants } = sdk
 
 const PEM_RE = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g
 
-// No defaults: every connection detail comes from the user.
-const enabledSpec = InputSpec.of({
+const emailValue = () =>
+  Value.text({
+    name: i18n('Vaultwarden Account Email'),
+    required: true,
+    default: null,
+    inputmode: 'email',
+  })
+
+const masterPasswordValue = () =>
+  Value.text({
+    name: i18n('Vaultwarden Master Password'),
+    description: i18n(
+      'Used to unlock the vault. It is stored in a root-only file on this server. Leave blank to keep the password already saved.',
+    ),
+    required: false,
+    default: null,
+    masked: true,
+  })
+
+// At an address. No defaults: every connection detail comes from the user.
+const addressSpec = InputSpec.of({
   url: Value.text({
     name: i18n('Vaultwarden URL'),
     description: i18n(
@@ -53,33 +72,27 @@ const enabledSpec = InputSpec.of({
     maxRows: 12,
     placeholder: '-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----',
   }),
-  email: Value.text({
-    name: i18n('Vaultwarden Account Email'),
-    required: true,
-    default: null,
-    inputmode: 'email',
-  }),
-  masterPassword: Value.text({
-    name: i18n('Vaultwarden Master Password'),
-    description: i18n(
-      'Used to unlock the vault. It is stored in a root-only file on this server. Leave blank to keep the password already saved.',
-    ),
-    required: false,
-    default: null,
-    masked: true,
-  }),
+  email: emailValue(),
+  masterPassword: masterPasswordValue(),
+})
+
+// Vaultwarden on this server: StartOS gives its address, so only the account.
+const localSpec = InputSpec.of({
+  email: emailValue(),
+  masterPassword: masterPasswordValue(),
 })
 
 const inputSpec = InputSpec.of({
   vaultwarden: Value.union({
     name: i18n('Vaultwarden'),
     description: i18n(
-      'Read secrets (the NAS login, the ntfy token) from a Vaultwarden or Bitwarden-compatible server instead of storing them here. Works with Vaultwarden up to version 1.35.x: the bundled rbw 1.15.0 cannot sign in to 1.36 or later.',
+      'Read secrets (the NAS login, the ntfy token) from a Vaultwarden or Bitwarden-compatible server instead of storing them here. "On this server": the Vaultwarden service on this StartOS server, with no address or certificate to enter. "At an address": a Vaultwarden anywhere else.',
     ),
     default: 'disabled',
     variants: Variants.of({
       disabled: { name: i18n('Off'), spec: InputSpec.of({}) },
-      enabled: { name: i18n('On'), spec: enabledSpec },
+      local: { name: i18n('On this server'), spec: localSpec },
+      address: { name: i18n('At an address'), spec: addressSpec },
     }),
   }),
 })
@@ -109,9 +122,17 @@ export const configureVaultwarden = sdk.Action.withInput(
     if (!v.enabled) {
       return { vaultwarden: { selection: 'disabled', value: {} } } as any
     }
+    if (v.location === 'local') {
+      return {
+        vaultwarden: {
+          selection: 'local',
+          value: { email: v.email || null, masterPassword: null },
+        },
+      } as any
+    }
     return {
       vaultwarden: {
-        selection: 'enabled',
+        selection: 'address',
         value: {
           url: v.url || null,
           ip: v.ip || null,
@@ -127,7 +148,7 @@ export const configureVaultwarden = sdk.Action.withInput(
     const settings = await settingsJson.read().once()
     const prev = settings?.vaultwarden ?? DEFAULT_VAULTWARDEN
 
-    if (input.vaultwarden.selection !== 'enabled') {
+    if (input.vaultwarden.selection === 'disabled') {
       // Keep the details, so turning it back on needs no retyping.
       await settingsJson.merge(effects, {
         vaultwarden: { ...prev, enabled: false },
@@ -150,26 +171,38 @@ export const configureVaultwarden = sdk.Action.withInput(
       }
     }
 
+    // On this server: the address details stay as they were, so switching
+    // back to "At an address" needs no retyping.
+    let connection: Pick<typeof prev, 'location' | 'url' | 'ip' | 'ca'> = {
+      location: 'local',
+      url: prev.url,
+      ip: prev.ip,
+      ca: prev.ca,
+    }
+    if (input.vaultwarden.selection === 'address') {
+      const a = input.vaultwarden.value
+      const url = clean(a.url).replace(/\/+$/, '')
+      const ip = clean(a.ip)
+      const host = new URL(url).hostname
+      if (host.endsWith('.local') && !ip) {
+        throw new Error(
+          i18n(
+            '"${host}" ends in .local, which StartOS services cannot look up. Enter the IP address it stands for.',
+            { host },
+          ),
+        )
+      }
+      const pems = (a.caCert ?? '').match(PEM_RE) ?? []
+      if (clean(a.caCert) && !pems.length) {
+        throw new Error(
+          i18n(
+            'The CA certificate must be a PEM block from -----BEGIN CERTIFICATE----- to -----END CERTIFICATE-----.',
+          ),
+        )
+      }
+      connection = { location: 'address', url, ip, ca: pems.join('\n') }
+    }
     const v = input.vaultwarden.value
-    const url = clean(v.url).replace(/\/+$/, '')
-    const ip = clean(v.ip)
-    const host = new URL(url).hostname
-    if (host.endsWith('.local') && !ip) {
-      throw new Error(
-        i18n(
-          '"${host}" ends in .local, which StartOS services cannot look up. Enter the IP address it stands for.',
-          { host },
-        ),
-      )
-    }
-    const pems = (v.caCert ?? '').match(PEM_RE) ?? []
-    if (clean(v.caCert) && !pems.length) {
-      throw new Error(
-        i18n(
-          'The CA certificate must be a PEM block from -----BEGIN CERTIFICATE----- to -----END CERTIFICATE-----.',
-        ),
-      )
-    }
 
     const secrets = (await secretsJson.read().once()) ?? {
       nasPassword: '',
@@ -187,9 +220,7 @@ export const configureVaultwarden = sdk.Action.withInput(
     await settingsJson.merge(effects, {
       vaultwarden: {
         enabled: true,
-        url,
-        ip,
-        ca: pems.join('\n'),
+        ...connection,
         email: clean(v.email),
       },
     })

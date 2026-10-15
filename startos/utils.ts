@@ -38,6 +38,17 @@ export const COLLECTOR_CONF = '/etc/collector.json'
 // System CAs plus a custom CA for a remote Vaultwarden (SSL_CERT_FILE).
 export const CA_BUNDLE = '/etc/ssl/certs/log-collector-bundle.pem'
 
+// Start9's Vaultwarden and ntfy packages, when they run on this server: the
+// package id, the host id of their web interface and its port inside their
+// container. Log Collector asks StartOS for the matching address on its
+// internal network (plain HTTP that never leaves the server).
+export const VAULTWARDEN_ID = 'vaultwarden'
+export const VAULTWARDEN_HOST_ID = 'main'
+export const VAULTWARDEN_PORT = 80
+export const NTFY_ID = 'ntfy'
+export const NTFY_HOST_ID = 'ui-multi'
+export const NTFY_PORT = 80
+
 // rbw (Vaultwarden client) keeps its login and vault copy on the volume, so a
 // restart is not a new device to Vaultwarden.
 export const RBW_DIR = '/data/rbw'

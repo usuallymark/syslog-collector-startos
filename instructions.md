@@ -103,7 +103,7 @@ While the copy is on, a file is only deleted from this server after it has been 
 
 ## Alerts
 
-**Actions > Configure Alerts** sends short alerts to your phone through [ntfy](https://ntfy.sh) when something needs attention right away. It starts off. You need an ntfy server (your own, or ntfy.sh) and a topic, subscribed in the ntfy app on your phone. If the server's name ends in `.local`, also enter its IP address; if its certificate comes from your own certificate authority, paste that CA certificate. If the topic is protected, add an access token (starts with `tk_`; create one in the ntfy web app under Account > Access tokens), either entered here or read from Vaultwarden (below): name the item and the field holding the token (a hidden custom field such as `api_key`, or `password`). Best practice is a dedicated ntfy user that may only write to this topic.
+**Actions > Configure Alerts** sends short alerts to your phone through [ntfy](https://ntfy.sh) when something needs attention right away. It starts off. You need an ntfy server (your own, or ntfy.sh) and a topic, subscribed in the ntfy app on your phone. If ntfy runs as a service on this StartOS server, choose **On this server** for the ntfy server: nothing else to enter. Otherwise choose **At an address** and enter its address. If that name ends in `.local`, also enter its IP address; if its certificate comes from your own certificate authority, paste that CA certificate. If the topic is protected, add an access token (starts with `tk_`; create one in the ntfy web app under Account > Access tokens), either entered here or read from Vaultwarden (below): name the item and the field holding the token (a hidden custom field such as `api_key`, or `password`). Best practice is a dedicated ntfy user that may only write to this topic.
 
 Built-in rules, each on by default and adjustable:
 
@@ -122,9 +122,14 @@ Every alert is also recorded in `alerts/YYYY-MM-DD.jsonl` with the time, rule, d
 
 ## Vaultwarden
 
-Instead of storing the NAS password or the ntfy token here, both can be read from your Vaultwarden. **Actions > Configure Vaultwarden** holds the connection, used by both: the URL you open Vaultwarden at, your account email and master password. If the URL uses a name ending in `.local`, also enter the IP address it stands for (StartOS services cannot look up `.local` names); if Vaultwarden's HTTPS certificate is signed by your own certificate authority, for example the root CA of the StartOS server it runs on, paste that CA certificate. Then choose **From Vaultwarden** in Configure NAS Copy or Configure Alerts and name the item. The **Vaultwarden** health check shows whether the vault unlocks and syncs.
+Instead of storing the NAS password or the ntfy token here, both can be read from your Vaultwarden. **Actions > Configure Vaultwarden** holds the connection, used by both:
 
-**Version limit:** the bundled rbw 1.15.0, the newest release, cannot sign in to Vaultwarden 1.36 or later, so this works with Vaultwarden up to 1.35.x only. That also rules out the current Vaultwarden package on StartOS. With a newer Vaultwarden, enter the secrets in their own actions.
+- **On this server**, when Vaultwarden runs as a service on this StartOS server: only your account email and master password. Log Collector reaches Vaultwarden over StartOS's internal network, so there is no address, IP or certificate to enter, and nothing to update if Vaultwarden's address or certificate changes.
+- **At an address**, for a Vaultwarden anywhere else: the URL you open Vaultwarden at, your account email and master password. If the URL uses a name ending in `.local`, also enter the IP address it stands for (StartOS services cannot look up `.local` names); if Vaultwarden's HTTPS certificate is signed by your own certificate authority, for example the root CA of the StartOS server it runs on, paste that CA certificate.
+
+Then choose **From Vaultwarden** in Configure NAS Copy or Configure Alerts and name the item. The **Vaultwarden** health check shows whether the vault unlocks and syncs.
+
+This works with current Vaultwarden versions, including the Vaultwarden package on StartOS. Log Collector only reads from the vault.
 
 ## Limitations
 
@@ -134,7 +139,6 @@ Instead of storing the NAS password or the ntfy token here, both can be read fro
 - Logs of StartOS itself are not collected.
 - Files older than the retention period are deleted, checked once an hour. Use the NAS copy, or back up, to keep them longer.
 - The NAS copy speaks SMB only.
-- Reading secrets from Vaultwarden works with Vaultwarden up to 1.35.x (see above).
 
 ## Backups
 

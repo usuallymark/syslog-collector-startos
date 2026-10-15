@@ -1,28 +1,33 @@
 import { VersionInfo } from '@start9labs/start-sdk'
 
 export const current = VersionInfo.of({
-  version: '8.2504.0:8',
+  version: '8.2504.0:9',
   releaseNotes: {
-    en_US: `Encrypted syslog (TLS), and a fix for phantom rejections.
+    en_US: `Vaultwarden and ntfy on this server, and no Vaultwarden version limit.
 
-- **TLS** (RFC 5425): turn on **Accept TLS** in Configure Receiver to receive encrypted syslog on its own port (6514 by default), next to plain UDP and TCP. The certificate is issued and renewed by your StartOS server; devices trust its root CA and connect using a name shown in the new **TLS** health check. Off by default.
-- **Fix:** the last reject counters of the previous run were counted again when the service started, so **Rejected Senders** (and the "Unknown sender" alert) showed a new rejection from an address that had sent nothing. Counts already recorded are kept and age out after 30 days.`,
-    es_ES: `Syslog cifrado (TLS) y una corrección de rechazos fantasma.
+- **On this server:** Configure Vaultwarden, and the ntfy server in Configure Alerts, now offer **On this server** next to **At an address**. Log Collector then reaches Start9's Vaultwarden or ntfy service over StartOS's internal network: no URL, IP address or certificate to enter, and nothing to update when an address or certificate changes. While chosen, they show as optional dependencies.
+- **No Vaultwarden version limit:** the bundled rbw 1.15.0 signs in, unlocks, syncs and reads secrets with current Vaultwarden, tested with 1.37.4, the Vaultwarden package on StartOS. The earlier note saying otherwise was wrong and is removed. (rbw cannot create or edit vault items on Vaultwarden 1.37 and later; Log Collector only reads.)
+- Existing settings stay **At an address** until you change them.`,
+    es_ES: `Vaultwarden y ntfy en este servidor, y sin límite de versión de Vaultwarden.
 
-- **TLS** (RFC 5425): activa **Aceptar TLS** en Configurar receptor para recibir syslog cifrado en su propio puerto (6514 por defecto), junto a UDP y TCP sin cifrar. El certificado lo emite y renueva tu servidor StartOS; los dispositivos confían en su CA raíz y se conectan con un nombre que muestra la nueva comprobación **TLS**. Desactivado por defecto.
-- **Corrección:** los últimos contadores de rechazos de la ejecución anterior se volvían a contar al iniciar el servicio, así que **Remitentes rechazados** (y la alerta "Remitente desconocido") mostraban un rechazo nuevo de una dirección que no había enviado nada. Los recuentos ya registrados se conservan y caducan a los 30 días.`,
-    de_DE: `Verschlüsseltes Syslog (TLS) und eine Korrektur für Phantom-Ablehnungen.
+- **En este servidor:** Configurar Vaultwarden, y el servidor ntfy en Configurar alertas, ofrecen ahora **En este servidor** junto a **En una dirección**. Log Collector llega entonces al servicio Vaultwarden o ntfy de Start9 por la red interna de StartOS: sin URL, dirección IP ni certificado que introducir, y nada que actualizar cuando cambie una dirección o un certificado. Mientras estén elegidos, aparecen como dependencias opcionales.
+- **Sin límite de versión de Vaultwarden:** el rbw 1.15.0 incluido inicia sesión, desbloquea, sincroniza y lee secretos con Vaultwarden actual, probado con la 1.37.4, el paquete Vaultwarden de StartOS. La nota anterior que decía lo contrario era errónea y se ha eliminado. (rbw no puede crear ni editar elementos en Vaultwarden 1.37 y posteriores; Log Collector solo lee.)
+- Los ajustes existentes siguen **En una dirección** hasta que los cambies.`,
+    de_DE: `Vaultwarden und ntfy auf diesem Server, und keine Vaultwarden-Versionsgrenze mehr.
 
-- **TLS** (RFC 5425): Schalten Sie **TLS annehmen** unter Empfänger konfigurieren ein, um verschlüsseltes Syslog auf einem eigenen Port (standardmäßig 6514) zu empfangen, neben unverschlüsseltem UDP und TCP. Das Zertifikat stellt Ihr StartOS-Server aus und erneuert es; Geräte vertrauen seiner Root-CA und verbinden sich mit einem Namen, den die neue Prüfung **TLS** anzeigt. Standardmäßig aus.
-- **Korrektur:** Die letzten Ablehnungszähler des vorherigen Laufs wurden beim Start des Dienstes erneut gezählt, sodass **Abgelehnte Absender** (und die Warnung „Unbekannter Absender“) eine neue Ablehnung einer Adresse zeigten, die nichts gesendet hatte. Bereits erfasste Zählungen bleiben erhalten und verfallen nach 30 Tagen.`,
-    pl_PL: `Szyfrowany syslog (TLS) i poprawka fantomowych odrzuceń.
+- **Auf diesem Server:** Vaultwarden konfigurieren und der ntfy-Server unter Warnungen konfigurieren bieten jetzt **Auf diesem Server** neben **Unter einer Adresse**. Log Collector erreicht dann den Vaultwarden- oder ntfy-Dienst von Start9 über das interne Netzwerk von StartOS: keine URL, IP-Adresse oder Zertifikat einzugeben, und nichts anzupassen, wenn sich eine Adresse oder ein Zertifikat ändert. Solange gewählt, erscheinen sie als optionale Abhängigkeiten.
+- **Keine Vaultwarden-Versionsgrenze:** Das mitgelieferte rbw 1.15.0 meldet sich an, entsperrt, synchronisiert und liest Geheimnisse mit aktuellem Vaultwarden, getestet mit 1.37.4, dem Vaultwarden-Paket von StartOS. Der frühere gegenteilige Hinweis war falsch und ist entfernt. (rbw kann unter Vaultwarden 1.37 und neuer keine Einträge anlegen oder ändern; Log Collector liest nur.)
+- Bestehende Einstellungen bleiben bei **Unter einer Adresse**, bis Sie sie ändern.`,
+    pl_PL: `Vaultwarden i ntfy na tym serwerze oraz brak limitu wersji Vaultwarden.
 
-- **TLS** (RFC 5425): włącz **Przyjmuj TLS** w Skonfiguruj odbiornik, aby odbierać szyfrowany syslog na osobnym porcie (domyślnie 6514), obok nieszyfrowanego UDP i TCP. Certyfikat wystawia i odnawia Twój serwer StartOS; urządzenia ufają jego głównemu CA i łączą się, używając nazwy pokazanej w nowej kontroli **TLS**. Domyślnie wyłączone.
-- **Poprawka:** ostatnie liczniki odrzuceń z poprzedniego uruchomienia były liczone ponownie przy starcie usługi, więc **Odrzuceni nadawcy** (i alert „Nieznany nadawca”) pokazywały nowe odrzucenie z adresu, który nic nie wysłał. Już zapisane liczby są zachowane i wygasają po 30 dniach.`,
-    fr_FR: `Syslog chiffré (TLS) et correction des rejets fantômes.
+- **Na tym serwerze:** Skonfiguruj Vaultwarden oraz serwer ntfy w Skonfiguruj alerty oferują teraz **Na tym serwerze** obok **Pod adresem**. Log Collector łączy się wtedy z usługą Vaultwarden lub ntfy od Start9 przez wewnętrzną sieć StartOS: bez URL, adresu IP ani certyfikatu do wpisania i bez aktualizacji, gdy zmieni się adres lub certyfikat. Gdy są wybrane, pojawiają się jako opcjonalne zależności.
+- **Brak limitu wersji Vaultwarden:** dołączony rbw 1.15.0 loguje się, odblokowuje, synchronizuje i odczytuje sekrety z aktualnym Vaultwarden, przetestowane z 1.37.4, pakietem Vaultwarden w StartOS. Wcześniejsza informacja, że jest inaczej, była błędna i została usunięta. (rbw nie może tworzyć ani edytować elementów w Vaultwarden 1.37 i nowszym; Log Collector tylko odczytuje.)
+- Istniejące ustawienia pozostają **Pod adresem**, dopóki ich nie zmienisz.`,
+    fr_FR: `Vaultwarden et ntfy sur ce serveur, et plus de limite de version de Vaultwarden.
 
-- **TLS** (RFC 5425) : activez **Accepter TLS** dans Configurer le récepteur pour recevoir du syslog chiffré sur son propre port (6514 par défaut), à côté de l'UDP et du TCP non chiffrés. Le certificat est émis et renouvelé par votre serveur StartOS ; les appareils font confiance à son autorité racine et se connectent avec un nom affiché par la nouvelle vérification **TLS**. Désactivé par défaut.
-- **Correctif :** les derniers compteurs de rejets de l'exécution précédente étaient recomptés au démarrage du service : **Expéditeurs rejetés** (et l'alerte « Expéditeur inconnu ») affichaient un nouveau rejet d'une adresse qui n'avait rien envoyé. Les décomptes déjà enregistrés sont conservés et expirent après 30 jours.`,
+- **Sur ce serveur :** Configurer Vaultwarden, et le serveur ntfy dans Configurer les alertes, proposent désormais **Sur ce serveur** à côté de **À une adresse**. Log Collector joint alors le service Vaultwarden ou ntfy de Start9 par le réseau interne de StartOS : aucune URL, adresse IP ni certificat à saisir, et rien à mettre à jour quand une adresse ou un certificat change. Tant qu'ils sont choisis, ils apparaissent comme dépendances facultatives.
+- **Plus de limite de version de Vaultwarden :** le rbw 1.15.0 intégré se connecte, déverrouille, synchronise et lit les secrets avec Vaultwarden actuel, testé avec la 1.37.4, le paquet Vaultwarden de StartOS. L'ancienne note affirmant le contraire était fausse et est supprimée. (rbw ne peut pas créer ni modifier d'éléments sur Vaultwarden 1.37 et plus récent ; Log Collector ne fait que lire.)
+- Les réglages existants restent sur **À une adresse** jusqu'à ce que vous les changiez.`,
   },
   migrations: {
     up: async () => {},
